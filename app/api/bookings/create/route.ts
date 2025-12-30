@@ -3,25 +3,39 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-function env(name: string) {
+function getEnv(name: string) {
   const v = process.env[name];
-  if (!v || !v.trim()) throw new Error(`ENV manquante: ${name}`);
-  return v;
+  return v && v.trim().length > 0 ? v : null;
 }
 
 export async function POST(req: Request) {
   try {
-    const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
-    const anonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-    const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
+    const supabaseUrl = getEnv("NEXT_PUBLIC_SUPABASE_URL");
+    const anonKey = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    const serviceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-    // ✅ Token depuis header Authorization
+    if (!supabaseUrl || !anonKey || !serviceKey) {
+      return NextResponse.json(
+        {
+          error: "Server misconfigured",
+          detail:
+            "Missing env var(s). Need NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY",
+          env: {
+            hasUrl: !!supabaseUrl,
+            hasAnon: !!anonKey,
+            hasService: !!serviceKey,
+          },
+        },
+        { status: 500 }
+      );
+    }
+
     const auth = req.headers.get("authorization") || "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
 
     if (!token) {
       return NextResponse.json(
-        { error: "Unauthorized", detail: "Missing Authorization Bearer token" },
+        { error: "Unauthorized", detail: "Missing Authorization: Bearer <token>" },
         { status: 401 }
       );
     }
@@ -34,10 +48,13 @@ export async function POST(req: Request) {
     };
 
     if (!body.parkingId || !body.start || !body.end || !body.totalPrice) {
-      return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Bad request", detail: "Missing fields" },
+        { status: 400 }
+      );
     }
 
-    // ✅ 1) Vérifier l'user avec ANON (vrai contexte utilisateur)
+    // 1) Vérifier l'utilisateur avec le token (client anon + header Authorization)
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
@@ -47,12 +64,21 @@ export async function POST(req: Request) {
 
     if (uErr || !u.user) {
       return NextResponse.json(
-        { error: "Unauthorized", detail: uErr?.message ?? "No user" },
+        {
+          error: "Unauthorized",
+          detail: uErr?.message ?? "No user returned by Supabase",
+          hint:
+            "Souvent: token invalide OU Vercel pointe vers un autre projet Supabase (URL/ANON différentes).",
+          debug: {
+            supabaseUrl,
+            tokenLooksPresent: token.length > 20,
+          },
+        },
         { status: 401 }
       );
     }
 
-    // ✅ 2) Insérer avec SERVICE ROLE (bypass RLS)
+    // 2) Insérer avec service role
     const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });

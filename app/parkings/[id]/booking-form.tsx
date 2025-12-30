@@ -4,13 +4,6 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../providers/AuthProvider";
 
-interface ApiResponse {
-  bookingId?: string;
-  url?: string;
-  error?: string;
-  detail?: string;
-}
-
 export default function BookingForm({
   parkingId,
   parkingTitle,
@@ -20,7 +13,7 @@ export default function BookingForm({
   parkingTitle: string;
   priceHour: number;
 }) {
-  const { ready, session } = useAuth();
+  const { supabase, ready, session } = useAuth();
   const router = useRouter();
 
   const [start, setStart] = useState<string>("");
@@ -28,22 +21,24 @@ export default function BookingForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  interface SessionWithToken {
-    access_token?: string;
-  }
+  type BookingResponse = {
+    bookingId?: string;
+    error?: string;
+    detail?: string;
+  };
+
+  type StripeResponse = {
+    url?: string;
+    error?: string;
+  };
 
   const amountChf = useMemo(() => {
     if (!start || !end) return 0;
-
     const s = Date.parse(start);
     const e = Date.parse(end);
-
     if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 0;
-
     const hours = (e - s) / (1000 * 60 * 60);
-    const total = hours * priceHour;
-
-    return Math.max(0, Math.round(total * 100) / 100);
+    return Math.max(0, Math.round(hours * priceHour * 100) / 100);
   }, [start, end, priceHour]);
 
   const onPayAndBook = async (e: React.FormEvent) => {
@@ -57,18 +52,10 @@ export default function BookingForm({
       return;
     }
 
-    // ✅ token direct depuis session (plus fiable que getSession() dans certains cas)
-    const token = (session as SessionWithToken)?.access_token;
-    if (!token) {
-      setError("Session invalide (token manquant). Déconnecte-toi / reconnecte-toi.");
-      return;
-    }
-
     if (!start || !end) {
       setError("Choisis une date de début et une date de fin.");
       return;
     }
-
     if (amountChf <= 0) {
       setError("Dates invalides (la fin doit être après le début).");
       return;
@@ -77,6 +64,16 @@ export default function BookingForm({
     setLoading(true);
 
     try {
+      // ✅ Token fiable : récupéré directement depuis Supabase
+      const { data: sData, error: sErr } = await supabase.auth.getSession();
+      const token = sData.session?.access_token;
+
+      if (sErr || !token) {
+        setLoading(false);
+        setError("Token manquant. Déconnecte-toi / reconnecte-toi puis réessaie.");
+        return;
+      }
+
       // 1) Créer booking côté serveur
       const r1 = await fetch("/api/bookings/create", {
         method: "POST",
@@ -92,17 +89,19 @@ export default function BookingForm({
         }),
       });
 
-      const j1: ApiResponse = await r1.json().catch(() => ({}));
+      const j1 = await r1.json().catch(() => ({} as BookingResponse));
 
       if (!r1.ok || !j1.bookingId) {
         setLoading(false);
-        setError(j1?.detail ? `${j1.error} — ${j1.detail}` : (j1.error ?? `Erreur create booking (${r1.status})`));
+        const msg =
+          j1?.detail ? `${j1.error} — ${j1.detail}` : (j1.error ?? `Erreur create booking (${r1.status})`);
+        setError(msg);
         return;
       }
 
       const bookingId = j1.bookingId as string;
 
-      // 2) Créer Stripe checkout
+      // 2) Stripe checkout
       const r2 = await fetch("/api/stripe/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -114,7 +113,7 @@ export default function BookingForm({
         }),
       });
 
-      const j2: ApiResponse = await r2.json().catch(() => ({}));
+      const j2 = await r2.json().catch(() => ({} as StripeResponse));
 
       setLoading(false);
 
