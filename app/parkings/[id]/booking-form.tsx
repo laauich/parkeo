@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useAuth } from "@/app/providers/AuthProvider";
 import { useRouter } from "next/navigation";
+import { useAuth } from "../../providers/AuthProvider";
 
 export default function BookingForm({
   parkingId,
@@ -16,16 +16,16 @@ export default function BookingForm({
   const { supabase, ready, session } = useAuth();
   const router = useRouter();
 
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
+  const [start, setStart] = useState<string>("");
+  const [end, setEnd] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const amountChf = useMemo(() => {
     if (!start || !end) return 0;
 
-    const s = new Date(start).getTime();
-    const e = new Date(end).getTime();
+    const s = Date.parse(start);
+    const e = Date.parse(end);
 
     if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 0;
 
@@ -52,55 +52,65 @@ export default function BookingForm({
     }
 
     if (amountChf <= 0) {
-      setError("Dates invalides (fin doit être après début).");
+      setError("Dates invalides (la fin doit être après le début).");
       return;
     }
 
     setLoading(true);
 
-    // 1) Créer une réservation en pending/unpaid
-    const { data: booking, error: bErr } = await supabase
-      .from("bookings")
-      .insert({
-        parking_id: parkingId,
-        start_time: start,
-        end_time: end,
-        total_price: amountChf,
-        status: "pending",
-        payment_status: "unpaid",
-      })
-      .select("id")
-      .single();
+    try {
+      // 1) create booking (pending/unpaid)
+      const { data: booking, error: bErr } = await supabase
+        .from("bookings")
+        .insert({
+          parking_id: parkingId,
+          start_time: start,
+          end_time: end,
+          total_price: amountChf,
+          status: "pending",
+          payment_status: "unpaid",
+        })
+        .select("id")
+        .single();
 
-    if (bErr || !booking) {
+      if (bErr || !booking) {
+        setLoading(false);
+        setError(bErr?.message ?? "Erreur lors de la création de la réservation.");
+        return;
+      }
+
+      // 2) create checkout session
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          parkingTitle,
+          amountChf,
+          currency: "chf",
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setLoading(false);
+        setError(json?.error ?? `Erreur API checkout (${res.status})`);
+        return;
+      }
+
+      if (!json?.url) {
+        setLoading(false);
+        setError("Stripe Checkout: URL manquante.");
+        return;
+      }
+
+      // 3) redirect to Stripe
+      window.location.assign(json.url);
+    } catch (err: unknown) {
       setLoading(false);
-      setError(bErr?.message ?? "Erreur lors de la création de la réservation.");
-      return;
+      setError(err instanceof Error ? err.message : "Erreur inconnue");
     }
-
-    // 2) Demander à ton backend de créer une session Stripe Checkout
-    const res = await fetch("/api/stripe/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bookingId: booking.id,
-        parkingTitle,
-        amountChf,
-        currency: "chf",
-      }),
-    });
-
-    const json = await res.json();
-
-    setLoading(false);
-
-    if (!res.ok || !json.url) {
-      setError(json.error ?? "Erreur Stripe Checkout.");
-      return;
-    }
-
-    // 3) Redirection vers Stripe
-    window.location.href = json.url;
   };
 
   return (
@@ -135,11 +145,7 @@ export default function BookingForm({
         {loading ? "Redirection..." : "Payer et réserver"}
       </button>
 
-      {error && <p className="text-red-600 text-sm">{error}</p>}
-
-      <p className="text-xs text-gray-500">
-        Le paiement confirme automatiquement la réservation.
-      </p>
+      {error && <p className="text-red-600 text-sm">Erreur : {error}</p>}
     </form>
   );
 }
