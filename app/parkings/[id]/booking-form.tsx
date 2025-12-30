@@ -4,6 +4,13 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../providers/AuthProvider";
 
+interface ApiResponse {
+  bookingId?: string;
+  url?: string;
+  error?: string;
+  detail?: string;
+}
+
 export default function BookingForm({
   parkingId,
   parkingTitle,
@@ -13,21 +20,29 @@ export default function BookingForm({
   parkingTitle: string;
   priceHour: number;
 }) {
-  const { supabase, ready, session } = useAuth();
+  const { ready, session } = useAuth();
   const router = useRouter();
 
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
+  const [start, setStart] = useState<string>("");
+  const [end, setEnd] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  interface SessionWithToken {
+    access_token?: string;
+  }
+
   const amountChf = useMemo(() => {
     if (!start || !end) return 0;
+
     const s = Date.parse(start);
     const e = Date.parse(end);
+
     if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 0;
+
     const hours = (e - s) / (1000 * 60 * 60);
     const total = hours * priceHour;
+
     return Math.max(0, Math.round(total * 100) / 100);
   }, [start, end, priceHour]);
 
@@ -39,6 +54,13 @@ export default function BookingForm({
 
     if (!session) {
       router.replace(`/login?next=${encodeURIComponent(`/parkings/${parkingId}`)}`);
+      return;
+    }
+
+    // ✅ token direct depuis session (plus fiable que getSession() dans certains cas)
+    const token = (session as SessionWithToken)?.access_token;
+    if (!token) {
+      setError("Session invalide (token manquant). Déconnecte-toi / reconnecte-toi.");
       return;
     }
 
@@ -55,40 +77,32 @@ export default function BookingForm({
     setLoading(true);
 
     try {
-      // ✅ Récupérer access token
-      const { data: sData, error: sErr } = await supabase.auth.getSession();
-      const accessToken = sData.session?.access_token;
-
-      if (sErr || !accessToken) {
-        setLoading(false);
-        setError("Session invalide (token manquant). Reconnecte-toi.");
-        return;
-      }
-
-      // 1) créer booking côté serveur (bypass RLS)
+      // 1) Créer booking côté serveur
       const r1 = await fetch("/api/bookings/create", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           parkingId,
           start,
           end,
           totalPrice: amountChf,
-          accessToken,
         }),
       });
 
-      const j1 = await r1.json().catch(() => ({}));
+      const j1: ApiResponse = await r1.json().catch(() => ({}));
 
       if (!r1.ok || !j1.bookingId) {
         setLoading(false);
-        setError(j1.error ?? `Erreur create booking (${r1.status})`);
+        setError(j1?.detail ? `${j1.error} — ${j1.detail}` : (j1.error ?? `Erreur create booking (${r1.status})`));
         return;
       }
 
       const bookingId = j1.bookingId as string;
 
-      // 2) créer checkout stripe
+      // 2) Créer Stripe checkout
       const r2 = await fetch("/api/stripe/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,7 +114,7 @@ export default function BookingForm({
         }),
       });
 
-      const j2 = await r2.json().catch(() => ({}));
+      const j2: ApiResponse = await r2.json().catch(() => ({}));
 
       setLoading(false);
 
@@ -109,7 +123,6 @@ export default function BookingForm({
         return;
       }
 
-      // 3) redirection vers Stripe
       window.location.assign(j2.url);
     } catch (err: unknown) {
       setLoading(false);
