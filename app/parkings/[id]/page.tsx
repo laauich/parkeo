@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import BookingForm from "./booking-form";
+import Link from "next/link";
 
 export default async function ParkingDetailPage({
   params,
@@ -15,7 +16,7 @@ export default async function ParkingDetailPage({
 
   const { data: parking, error } = await supabase
     .from("parkings")
-    .select("id,title,address,price_hour,price_day,instructions,is_active")
+    .select("id,title,address,city,price_hour,price_day,instructions,is_active")
     .eq("id", id)
     .single();
 
@@ -23,8 +24,9 @@ export default async function ParkingDetailPage({
     return (
       <main className="max-w-3xl mx-auto p-6">
         <p className="text-red-600">Parking introuvable.</p>
-        {error && <pre className="mt-3 text-xs">{error.message}</pre>}
-        <a className="underline" href="/parkings">Retour</a>
+        <Link className="underline" href="/parkings">
+          Retour
+        </Link>
       </main>
     );
   }
@@ -33,11 +35,15 @@ export default async function ParkingDetailPage({
     <main className="max-w-3xl mx-auto p-6 space-y-6">
       <div className="border rounded p-4">
         <h1 className="text-2xl font-semibold">{parking.title}</h1>
-        <p className="text-sm text-gray-600">{parking.address}</p>
-        <p className="mt-2">
-          💰 {parking.price_hour} CHF / h
-          {parking.price_day ? ` · ${parking.price_day} CHF / jour` : ""}
+        <p className="text-sm text-gray-600">
+          {parking.address} {parking.city ? `· ${parking.city}` : ""}
         </p>
+
+        <p className="mt-2">
+          💰 {Number(parking.price_hour).toFixed(2)} CHF / h
+          {parking.price_day ? ` · ${Number(parking.price_day).toFixed(2)} CHF / jour` : ""}
+        </p>
+
         {parking.instructions && (
           <p className="mt-3 text-sm">
             <span className="font-medium">Instructions :</span>{" "}
@@ -50,12 +56,14 @@ export default async function ParkingDetailPage({
         <h2 className="text-lg font-semibold">Réserver</h2>
         <BookingForm
           parkingId={parking.id}
+          parkingTitle={parking.title}
           priceHour={Number(parking.price_hour)}
-          priceDay={parking.price_day ? Number(parking.price_day) : null}
         />
       </div>
 
-      <a className="underline" href="/parkings">← Retour à la liste</a>
+      <Link className="underline" href="/parkings">
+        ← Retour à la liste
+      </Link>
     </main>
   );
 }

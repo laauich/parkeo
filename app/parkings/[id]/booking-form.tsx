@@ -1,174 +1,145 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { useMemo, useState } from "react";
+import { useAuth } from "@/app/providers/AuthProvider";
+import { useRouter } from "next/navigation";
 
 export default function BookingForm({
   parkingId,
+  parkingTitle,
   priceHour,
-  priceDay,
 }: {
   parkingId: string;
+  parkingTitle: string;
   priceHour: number;
-  priceDay: number | null;
 }) {
-  const supabase = supabaseBrowser();
+  const { supabase, ready, session } = useAuth();
+  const router = useRouter();
 
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-
-  const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // 🔐 Vérifier la session
-  useEffect(() => {
-    const checkSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setUserEmail(data.session?.user.email ?? null);
-    };
-    checkSession();
-  }, [supabase]);
+  const amountChf = useMemo(() => {
+    if (!start || !end) return 0;
 
-  // 💰 Calcul du prix (SANS setState)
-  const computedPrice = useMemo(() => {
-    if (!start || !end) return null;
+    const s = new Date(start).getTime();
+    const e = new Date(end).getTime();
 
-    const s = new Date(start);
-    const e = new Date(end);
+    if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 0;
 
-    if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return null;
-    if (e <= s) return null;
-
-    const hours = (e.getTime() - s.getTime()) / (1000 * 60 * 60);
-
-    if (priceDay && hours >= 24) {
-      const days = Math.floor(hours / 24);
-      const remainingHours = hours - days * 24;
-      const total = days * priceDay + remainingHours * priceHour;
-      return Math.round(total * 100) / 100;
-    }
-
+    const hours = (e - s) / (1000 * 60 * 60);
     const total = hours * priceHour;
-    return Math.round(total * 100) / 100;
-  }, [start, end, priceHour, priceDay]);
 
-  // 🅿️ Réserver
-  const onBook = async (e: React.FormEvent) => {
+    return Math.max(0, Math.round(total * 100) / 100);
+  }, [start, end, priceHour]);
+
+  const onPayAndBook = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setOk(null);
-    setLoading(true);
 
-    const { data } = await supabase.auth.getSession();
-    const session = data.session;
+    if (!ready) return;
 
     if (!session) {
-      setLoading(false);
-      setError("Vous devez être connecté. Allez sur /login.");
+      router.replace(`/login?next=${encodeURIComponent(`/parkings/${parkingId}`)}`);
       return;
     }
 
     if (!start || !end) {
-      setLoading(false);
-      setError("Veuillez choisir un début et une fin.");
+      setError("Choisis une date de début et une date de fin.");
       return;
     }
 
-    const s = new Date(start);
-    const eDate = new Date(end);
-
-    if (eDate <= s) {
-      setLoading(false);
-      setError("La fin doit être après le début.");
+    if (amountChf <= 0) {
+      setError("Dates invalides (fin doit être après début).");
       return;
     }
 
-    // 🚫 Vérifier les conflits (overlap)
-    const { data: conflicts, error: conflictError } = await supabase
+    setLoading(true);
+
+    // 1) Créer une réservation en pending/unpaid
+    const { data: booking, error: bErr } = await supabase
       .from("bookings")
+      .insert({
+        parking_id: parkingId,
+        start_time: start,
+        end_time: end,
+        total_price: amountChf,
+        status: "pending",
+        payment_status: "unpaid",
+      })
       .select("id")
-      .eq("parking_id", parkingId)
-      .neq("status", "cancelled")
-      .lt("start_time", eDate.toISOString())
-      .gt("end_time", s.toISOString())
-      .limit(1);
+      .single();
 
-    if (conflictError) {
+    if (bErr || !booking) {
       setLoading(false);
-      setError(conflictError.message);
+      setError(bErr?.message ?? "Erreur lors de la création de la réservation.");
       return;
     }
 
-    if (conflicts && conflicts.length > 0) {
-      setLoading(false);
-      setError("Ce créneau est déjà réservé.");
-      return;
-    }
-
-    // ✅ Créer la réservation
-    const { error: insertError } = await supabase.from("bookings").insert({
-      parking_id: parkingId,
-      user_id: session.user.id,
-      start_time: s.toISOString(),
-      end_time: eDate.toISOString(),
-      total_price: computedPrice ?? 0,
-      status: "confirmed",
+    // 2) Demander à ton backend de créer une session Stripe Checkout
+    const res = await fetch("/api/stripe/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bookingId: booking.id,
+        parkingTitle,
+        amountChf,
+        currency: "chf",
+      }),
     });
+
+    const json = await res.json();
 
     setLoading(false);
 
-    if (insertError) {
-      setError(insertError.message);
+    if (!res.ok || !json.url) {
+      setError(json.error ?? "Erreur Stripe Checkout.");
       return;
     }
 
-    setOk("Réservation confirmée ✅");
+    // 3) Redirection vers Stripe
+    window.location.href = json.url;
   };
 
   return (
-    <form onSubmit={onBook} className="mt-4 space-y-3">
-      <p className="text-sm text-gray-600">
-        Session :{" "}
-        {userEmail ? `connecté (${userEmail})` : "non connecté"}
-      </p>
-
-      <label className="block text-sm">
-        Début
+    <form onSubmit={onPayAndBook} className="mt-4 space-y-3">
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-gray-700">Début</label>
         <input
-          className="w-full border rounded p-2 mt-1"
           type="datetime-local"
+          className="border rounded p-2"
           value={start}
           onChange={(e) => setStart(e.target.value)}
           required
         />
-      </label>
+      </div>
 
-      <label className="block text-sm">
-        Fin
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-gray-700">Fin</label>
         <input
-          className="w-full border rounded p-2 mt-1"
           type="datetime-local"
+          className="border rounded p-2"
           value={end}
           onChange={(e) => setEnd(e.target.value)}
           required
         />
-      </label>
+      </div>
 
-      <p className="text-sm">
-        Prix estimé :{" "}
-        <span className="font-medium">
-          {computedPrice !== null ? `${computedPrice} CHF` : "-"}
-        </span>
+      <p className="text-sm text-gray-600">
+        Total estimé : <b>{amountChf.toFixed(2)} CHF</b>
       </p>
 
-      <button className="w-full border rounded p-2" disabled={loading}>
-        {loading ? "Réservation..." : "Réserver"}
+      <button className="border rounded px-4 py-2" disabled={loading}>
+        {loading ? "Redirection..." : "Payer et réserver"}
       </button>
 
       {error && <p className="text-red-600 text-sm">{error}</p>}
-      {ok && <p className="text-green-700 text-sm">{ok}</p>}
+
+      <p className="text-xs text-gray-500">
+        Le paiement confirme automatiquement la réservation.
+      </p>
     </form>
   );
 }
