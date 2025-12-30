@@ -15,15 +15,6 @@ function getEnv(name: string) {
   return v && v.trim().length > 0 ? v : null;
 }
 
-function errorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return "Unknown error";
-  }
-}
-
 export async function POST(req: Request) {
   try {
     const stripeKey = getEnv("STRIPE_SECRET_KEY");
@@ -31,13 +22,13 @@ export async function POST(req: Request) {
 
     if (!stripeKey) {
       return NextResponse.json(
-        { version: "checkout_v2", error: "Missing STRIPE_SECRET_KEY" },
+        { ok: false, where: "env", error: "Missing STRIPE_SECRET_KEY" },
         { status: 500 }
       );
     }
     if (!appUrl) {
       return NextResponse.json(
-        { version: "checkout_v2", error: "Missing NEXT_PUBLIC_APP_URL" },
+        { ok: false, where: "env", error: "Missing NEXT_PUBLIC_APP_URL" },
         { status: 500 }
       );
     }
@@ -48,7 +39,7 @@ export async function POST(req: Request) {
 
     if (!body.bookingId || !body.parkingTitle || !body.amountChf) {
       return NextResponse.json(
-        { version: "checkout_v2", error: "Missing fields" },
+        { ok: false, where: "body", error: "Missing fields" },
         { status: 400 }
       );
     }
@@ -74,15 +65,19 @@ export async function POST(req: Request) {
       success_url: `${appUrl}/payment/success?bookingId=${encodeURIComponent(
         body.bookingId
       )}&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appUrl}/payment/cancel?bookingId=${encodeURIComponent(body.bookingId)}`,
+      cancel_url: `${appUrl}/payment/cancel?bookingId=${encodeURIComponent(
+        body.bookingId
+      )}`,
       metadata: { bookingId: body.bookingId },
     });
 
-    return NextResponse.json({ version: "checkout_v2", url: session.url });
+    return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
   } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json(
-      { version: "checkout_v2", error: errorMessage(e) },
+      { ok: false, where: "exception", error: msg },
       { status: 500 }
     );
   }
 }
+

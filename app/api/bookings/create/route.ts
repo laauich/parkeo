@@ -33,12 +33,7 @@ export async function POST(req: Request) {
     const auth = req.headers.get("authorization") || "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
 
-    if (!token) {
-      return NextResponse.json(
-        { error: "Unauthorized", detail: "Missing Authorization: Bearer <token>" },
-        { status: 401 }
-      );
-    }
+    
 
     const body = (await req.json()) as {
       parkingId?: string;
@@ -71,7 +66,7 @@ export async function POST(req: Request) {
             "Souvent: token invalide OU Vercel pointe vers un autre projet Supabase (URL/ANON différentes).",
           debug: {
             supabaseUrl,
-            tokenLooksPresent: token.length > 20,
+            tokenLooksPresent: token ? token.length > 20 : false,
           },
         },
         { status: 401 }
