@@ -16,22 +16,18 @@ export default function BookingForm({
   const { supabase, ready, session } = useAuth();
   const router = useRouter();
 
-  const [start, setStart] = useState<string>("");
-  const [end, setEnd] = useState<string>("");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const amountChf = useMemo(() => {
     if (!start || !end) return 0;
-
     const s = Date.parse(start);
     const e = Date.parse(end);
-
     if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 0;
-
     const hours = (e - s) / (1000 * 60 * 60);
     const total = hours * priceHour;
-
     return Math.max(0, Math.round(total * 100) / 100);
   }, [start, end, priceHour]);
 
@@ -59,55 +55,62 @@ export default function BookingForm({
     setLoading(true);
 
     try {
-      // 1) create booking (pending/unpaid) + user_id pour RLS ✅
-      const { data: booking, error: bErr } = await supabase
-        .from("bookings")
-        .insert({
-          user_id: session.user.id, // ✅ IMPORTANT
-          parking_id: parkingId,
-          start_time: start,
-          end_time: end,
-          total_price: amountChf,
-          status: "pending",
-          payment_status: "unpaid",
-        })
-        .select("id")
-        .single();
+      // ✅ Récupérer access token
+      const { data: sData, error: sErr } = await supabase.auth.getSession();
+      const accessToken = sData.session?.access_token;
 
-      if (bErr || !booking) {
+      if (sErr || !accessToken) {
         setLoading(false);
-        setError(bErr?.message ?? "Erreur lors de la création de la réservation.");
+        setError("Session invalide (token manquant). Reconnecte-toi.");
         return;
       }
 
-      // 2) create checkout session
-      const res = await fetch("/api/stripe/checkout", {
+      // 1) créer booking côté serveur (bypass RLS)
+      const r1 = await fetch("/api/bookings/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          bookingId: booking.id,
+          parkingId,
+          start,
+          end,
+          totalPrice: amountChf,
+          accessToken,
+        }),
+      });
+
+      const j1 = await r1.json().catch(() => ({}));
+
+      if (!r1.ok || !j1.bookingId) {
+        setLoading(false);
+        setError(j1.error ?? `Erreur create booking (${r1.status})`);
+        return;
+      }
+
+      const bookingId = j1.bookingId as string;
+
+      // 2) créer checkout stripe
+      const r2 = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookingId,
           parkingTitle,
           amountChf,
           currency: "chf",
         }),
       });
 
-      const json = await res.json().catch(() => ({}));
+      const j2 = await r2.json().catch(() => ({}));
 
-      if (!res.ok) {
-        setLoading(false);
-        setError(json?.error ?? `Erreur API checkout (${res.status})`);
+      setLoading(false);
+
+      if (!r2.ok || !j2.url) {
+        setError(j2.error ?? `Erreur Stripe checkout (${r2.status})`);
         return;
       }
 
-      if (!json?.url) {
-        setLoading(false);
-        setError("Stripe Checkout: URL manquante.");
-        return;
-      }
-
-      // 3) redirect to Stripe
-      window.location.assign(json.url);
+      // 3) redirection vers Stripe
+      window.location.assign(j2.url);
     } catch (err: unknown) {
       setLoading(false);
       setError(err instanceof Error ? err.message : "Erreur inconnue");
