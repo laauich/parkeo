@@ -59,10 +59,11 @@ export default function BookingForm({
     setLoading(true);
 
     try {
-      // 1) create booking (pending/unpaid)
+      // 1) create booking (pending/unpaid) + user_id pour RLS ✅
       const { data: booking, error: bErr } = await supabase
         .from("bookings")
         .insert({
+          user_id: session.user.id, // ✅ IMPORTANT
           parking_id: parkingId,
           start_time: start,
           end_time: end,
