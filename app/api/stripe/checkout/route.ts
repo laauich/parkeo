@@ -1,86 +1,76 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import Stripe from "stripe";
 
 export const runtime = "nodejs";
 
-function env(name: string) {
+type Body = {
+  bookingId: string;
+  parkingTitle: string;
+  amountChf: number;
+  currency?: string;
+};
+
+function getEnv(name: string) {
   const v = process.env[name];
-  if (!v || !v.trim()) throw new Error(`ENV manquante: ${name}`);
-  return v;
+  return v && v.trim().length > 0 ? v : null;
+}
+
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return "Unknown error";
+  }
 }
 
 export async function POST(req: Request) {
   try {
-    const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
-    const anonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-    const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
+    const stripeKey = getEnv("STRIPE_SECRET_KEY");
+    const appUrl = getEnv("NEXT_PUBLIC_APP_URL");
 
-    // ✅ Token depuis header Authorization
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-
-    if (!token) {
-      return NextResponse.json(
-        { error: "Unauthorized", detail: "Missing Authorization Bearer token" },
-        { status: 401 }
-      );
+    if (!stripeKey) {
+      return NextResponse.json({ error: "Missing STRIPE_SECRET_KEY" }, { status: 500 });
+    }
+    if (!appUrl) {
+      return NextResponse.json({ error: "Missing NEXT_PUBLIC_APP_URL" }, { status: 500 });
     }
 
-    const body = (await req.json()) as {
-      parkingId?: string;
-      start?: string;
-      end?: string;
-      totalPrice?: number;
-    };
+    const stripe = new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" });
 
-    if (!body.parkingId || !body.start || !body.end || !body.totalPrice) {
+    const body = (await req.json()) as Body;
+
+    if (!body.bookingId || !body.parkingTitle || !body.amountChf) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
 
-    // ✅ 1) Vérifier l'user avec ANON (vrai contexte utilisateur)
-    const supabaseAuth = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false },
+    const currency = (body.currency ?? "chf").toLowerCase();
+    const unitAmount = Math.round(body.amountChf * 100);
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency,
+            unit_amount: unitAmount,
+            product_data: {
+              name: `Réservation : ${body.parkingTitle}`,
+            },
+          },
+        },
+      ],
+      success_url: `${appUrl}/payment/success?bookingId=${encodeURIComponent(
+        body.bookingId
+      )}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appUrl}/payment/cancel?bookingId=${encodeURIComponent(body.bookingId)}`,
+      metadata: { bookingId: body.bookingId },
     });
 
-    const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-
-    if (uErr || !u.user) {
-      return NextResponse.json(
-        { error: "Unauthorized", detail: uErr?.message ?? "No user" },
-        { status: 401 }
-      );
-    }
-
-    // ✅ 2) Insérer avec SERVICE ROLE (bypass RLS)
-    const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
-      auth: { persistSession: false },
-    });
-
-    const { data: booking, error: bErr } = await supabaseAdmin
-      .from("bookings")
-      .insert({
-        user_id: u.user.id,
-        parking_id: body.parkingId,
-        start_time: body.start,
-        end_time: body.end,
-        total_price: body.totalPrice,
-        status: "pending",
-        payment_status: "unpaid",
-      })
-      .select("id")
-      .single();
-
-    if (bErr || !booking) {
-      return NextResponse.json(
-        { error: "Insert booking failed", detail: bErr?.message ?? "No booking" },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({ bookingId: booking.id }, { status: 200 });
+    return NextResponse.json({ url: session.url });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
   }
 }
