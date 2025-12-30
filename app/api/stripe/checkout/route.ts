@@ -4,7 +4,7 @@ import Stripe from "stripe";
 export const runtime = "nodejs";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
+  apiVersion: "2025-12-15.clover",
 });
 
 type Body = {
@@ -13,6 +13,15 @@ type Body = {
   amountChf: number;
   currency?: string;
 };
+
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return "Unknown error";
+  }
+}
 
 export async function POST(req: Request) {
   try {
@@ -48,18 +57,19 @@ export async function POST(req: Request) {
           },
         },
       ],
-      success_url: `${appUrl}/payment/success?bookingId=${body.bookingId}&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appUrl}/payment/cancel?bookingId=${body.bookingId}`,
+      success_url: `${appUrl}/payment/success?bookingId=${encodeURIComponent(
+        body.bookingId
+      )}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appUrl}/payment/cancel?bookingId=${encodeURIComponent(
+        body.bookingId
+      )}`,
       metadata: {
         bookingId: body.bookingId,
       },
     });
 
     return NextResponse.json({ url: session.url });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Stripe checkout error" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
   }
 }
