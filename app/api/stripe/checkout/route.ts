@@ -30,18 +30,27 @@ export async function POST(req: Request) {
     const appUrl = getEnv("NEXT_PUBLIC_APP_URL");
 
     if (!stripeKey) {
-      return NextResponse.json({ error: "Missing STRIPE_SECRET_KEY" }, { status: 500 });
+      return NextResponse.json(
+        { version: "checkout_v2", error: "Missing STRIPE_SECRET_KEY" },
+        { status: 500 }
+      );
     }
     if (!appUrl) {
-      return NextResponse.json({ error: "Missing NEXT_PUBLIC_APP_URL" }, { status: 500 });
+      return NextResponse.json(
+        { version: "checkout_v2", error: "Missing NEXT_PUBLIC_APP_URL" },
+        { status: 500 }
+      );
     }
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" });
+    const stripe = new Stripe(stripeKey);
 
     const body = (await req.json()) as Body;
 
     if (!body.bookingId || !body.parkingTitle || !body.amountChf) {
-      return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+      return NextResponse.json(
+        { version: "checkout_v2", error: "Missing fields" },
+        { status: 400 }
+      );
     }
 
     const currency = (body.currency ?? "chf").toLowerCase();
@@ -69,8 +78,11 @@ export async function POST(req: Request) {
       metadata: { bookingId: body.bookingId },
     });
 
-    return NextResponse.json({ url: session.url });
+    return NextResponse.json({ version: "checkout_v2", url: session.url });
   } catch (e: unknown) {
-    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
+    return NextResponse.json(
+      { version: "checkout_v2", error: errorMessage(e) },
+      { status: 500 }
+    );
   }
 }
