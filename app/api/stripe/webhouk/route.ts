@@ -3,19 +3,11 @@ import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function getEnv(name: string) {
   const v = process.env[name];
   return v && v.trim().length > 0 ? v : null;
-}
-
-function supabaseAdmin() {
-  const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const serviceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
-  if (!url || !serviceKey) {
-    throw new Error("Missing Supabase env (NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY)");
-  }
-  return createClient(url, serviceKey);
 }
 
 function errorMessage(e: unknown): string {
@@ -25,6 +17,13 @@ function errorMessage(e: unknown): string {
   } catch {
     return "Unknown error";
   }
+}
+
+function supabaseAdmin() {
+  const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const service = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !service) throw new Error("Missing Supabase env");
+  return createClient(url, service, { auth: { persistSession: false } });
 }
 
 export async function POST(req: Request) {
@@ -39,18 +38,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing STRIPE_WEBHOOK_SECRET" }, { status: 500 });
     }
 
-    // ⚠️ Important : Stripe signature vérifie le RAW body
-    const rawBody = await req.text();
-    const signature = req.headers.get("stripe-signature");
-    if (!signature) {
-      return NextResponse.json({ error: "Missing stripe-signature header" }, { status: 400 });
+    const sig = req.headers.get("stripe-signature");
+    if (!sig) {
+      return NextResponse.json({ error: "Missing stripe-signature" }, { status: 400 });
     }
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" });
+    const rawBody = await req.text();
+    const stripe = new Stripe(stripeKey);
 
     let event: Stripe.Event;
     try {
-      event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+      event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
     } catch (e: unknown) {
       return NextResponse.json(
         { error: "Signature verification failed", detail: errorMessage(e) },
@@ -58,14 +56,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // ✅ Event principal : paiement terminé
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
-
-      const bookingId = session.metadata?.bookingId ?? null;
-      const sessionId = session.id;
-      const paymentIntentId =
-        typeof session.payment_intent === "string" ? session.payment_intent : null;
+      const bookingId = session.metadata?.bookingId;
 
       if (bookingId) {
         const supabase = supabaseAdmin();
@@ -73,10 +66,9 @@ export async function POST(req: Request) {
         const { error } = await supabase
           .from("bookings")
           .update({
-            stripe_session_id: sessionId,
-            stripe_payment_intent_id: paymentIntentId,
             payment_status: "paid",
             status: "confirmed",
+            stripe_session_id: session.id,
             currency: session.currency ?? "chf",
           })
           .eq("id", bookingId);
