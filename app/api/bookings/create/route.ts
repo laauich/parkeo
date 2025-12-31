@@ -1,107 +1,101 @@
+// app/api/bookings/create/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-export const runtime = "nodejs";
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { persistSession: false } }
+);
 
-function getEnv(name: string) {
-  const v = process.env[name];
-  return v && v.trim().length > 0 ? v : null;
-}
+type CreateBookingBody = {
+  userId: string;
+  parkingId: string;
+  startTime: string; // ISO string
+  endTime: string;   // ISO string
+  totalPrice: number;
+  currency?: string; // default "CHF"
+};
 
 export async function POST(req: Request) {
   try {
-    const supabaseUrl = getEnv("NEXT_PUBLIC_SUPABASE_URL");
-    const anonKey = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-    const serviceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+    const body = (await req.json()) as Partial<CreateBookingBody>;
+    const { userId, parkingId, startTime, endTime, totalPrice } = body;
 
-    if (!supabaseUrl || !anonKey || !serviceKey) {
+    if (!userId || !parkingId || !startTime || !endTime || typeof totalPrice !== "number") {
+      return NextResponse.json({ error: "Missing/invalid fields" }, { status: 400 });
+    }
+
+    // Validation temps (minimum)
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
+    }
+    if (end <= start) {
+      return NextResponse.json({ error: "endTime must be after startTime" }, { status: 400 });
+    }
+
+    // (Optionnel) arrondi/minimum ici si tu veux
+
+    // ---- Option A: advisory lock + overlap check (utile même si Option B existe)
+    // Advisory locks sont par transaction, mais via supabase-js on ne contrôle pas une transaction facilement.
+    // Donc soit tu relies sur Option B (contraintes DB), soit tu fais overlap check simple (moins "béton").
+    // -> Pour rester simple et robuste : on fait un overlap check + on s'appuie sur Option B si activée.
+
+    // Overlap check "best effort" (évite beaucoup de conflits)
+    const { data: overlap, error: overlapErr } = await supabaseAdmin
+      .from("bookings")
+      .select("id")
+      .eq("parking_id", parkingId)
+      .in("status", ["pending_payment", "confirmed"])
+      .lt("start_time", end.toISOString())  // existing.start < new.end
+      .gt("end_time", start.toISOString())  // existing.end > new.start
+      .limit(1);
+
+    if (overlapErr) {
+      return NextResponse.json({ error: overlapErr.message }, { status: 500 });
+    }
+    if (overlap && overlap.length > 0) {
       return NextResponse.json(
-        {
-          error: "Server misconfigured",
-          detail:
-            "Missing env var(s). Need NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY",
-          env: {
-            hasUrl: !!supabaseUrl,
-            hasAnon: !!anonKey,
-            hasService: !!serviceKey,
-          },
-        },
-        { status: 500 }
+        { error: "Ce créneau est déjà réservé. Choisis un autre horaire." },
+        { status: 409 }
       );
     }
 
-    const auth = req.headers.get("authorization") || "";
-    const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-
-    
-
-    const body = (await req.json()) as {
-      parkingId?: string;
-      start?: string;
-      end?: string;
-      totalPrice?: number;
-    };
-
-    if (!body.parkingId || !body.start || !body.end || !body.totalPrice) {
-      return NextResponse.json(
-        { error: "Bad request", detail: "Missing fields" },
-        { status: 400 }
-      );
-    }
-
-    // 1) Vérifier l'utilisateur avec le token (client anon + header Authorization)
-    const supabaseAuth = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false },
-    });
-
-    const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-
-    if (uErr || !u.user) {
-      return NextResponse.json(
-        {
-          error: "Unauthorized",
-          detail: uErr?.message ?? "No user returned by Supabase",
-          hint:
-            "Souvent: token invalide OU Vercel pointe vers un autre projet Supabase (URL/ANON différentes).",
-          debug: {
-            supabaseUrl,
-            tokenLooksPresent: token ? token.length > 20 : false,
-          },
-        },
-        { status: 401 }
-      );
-    }
-
-    // 2) Insérer avec service role
-    const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
-      auth: { persistSession: false },
-    });
-
-    const { data: booking, error: bErr } = await supabaseAdmin
+    // Créer le booking en pending_payment
+    const { data: created, error: insertErr } = await supabaseAdmin
       .from("bookings")
       .insert({
-        user_id: u.user.id,
-        parking_id: body.parkingId,
-        start_time: body.start,
-        end_time: body.end,
-        total_price: body.totalPrice,
-        status: "pending",
+        user_id: userId,
+        parking_id: parkingId,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        total_price: totalPrice,
+        currency: body.currency ?? "CHF",
+        status: "pending_payment",
         payment_status: "unpaid",
+        // Optionnel: expires_at: new Date(Date.now()+10*60*1000).toISOString()
       })
-      .select("id")
+      .select("*")
       .single();
 
-    if (bErr || !booking) {
-      return NextResponse.json(
-        { error: "Insert booking failed", detail: bErr?.message ?? "No booking" },
-        { status: 500 }
-      );
+    if (insertErr) {
+      // Si Option B (EXCLUDE) est en place, une collision arrivera ici même si le check est passé.
+      // On renvoie 409 proprement.
+      const msg = insertErr.message.toLowerCase();
+      if (msg.includes("bookings_no_overlap") || msg.includes("exclude") || msg.includes("conflict")) {
+        return NextResponse.json(
+          { error: "Ce créneau vient d’être pris par quelqu’un d’autre. Réessaie avec un autre horaire." },
+          { status: 409 }
+        );
+      }
+      return NextResponse.json({ error: insertErr.message }, { status: 500 });
     }
 
-    return NextResponse.json({ bookingId: booking.id }, { status: 200 });
+    return NextResponse.json({ booking: created }, { status: 200 });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const errorMessage = e instanceof Error ? e.message : "Server error";
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
