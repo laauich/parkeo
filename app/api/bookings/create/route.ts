@@ -2,33 +2,86 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { persistSession: false } }
-);
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type CreateBookingBody = {
-  userId: string;
-  parkingId: string;
-  startTime: string; // ISO string
-  endTime: string;   // ISO string
-  totalPrice: number;
-  currency?: string; // default "CHF"
+function env(name: string) {
+  const v = process.env[name];
+  if (!v || !v.trim()) throw new Error(`ENV manquante: ${name}`);
+  return v;
+}
+
+function getBearerToken(req: Request) {
+  const auth = req.headers.get("authorization") || "";
+  if (!auth.startsWith("Bearer ")) return null;
+  return auth.slice(7);
+}
+
+type Body = {
+  // accepte les 2 variantes
+  parkingId?: string;
+  start?: string;      // "YYYY-MM-DDTHH:mm" depuis input datetime-local
+  end?: string;
+  startTime?: string;  // ISO
+  endTime?: string;    // ISO
+  totalPrice?: number;
+  amountChf?: number;  // au cas où ton front envoie ça
+  currency?: string;
 };
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Partial<CreateBookingBody>;
-    const { userId, parkingId, startTime, endTime, totalPrice } = body;
+    const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
+    const anonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!userId || !parkingId || !startTime || !endTime || typeof totalPrice !== "number") {
-      return NextResponse.json({ error: "Missing/invalid fields" }, { status: 400 });
+    const token = getBearerToken(req);
+    if (!token) {
+      return NextResponse.json(
+        { error: "Unauthorized", detail: "Missing Authorization: Bearer <token>" },
+        { status: 401 }
+      );
     }
 
-    // Validation temps (minimum)
-    const start = new Date(startTime);
-    const end = new Date(endTime);
+    const body = (await req.json()) as Body;
+
+    const parkingId = body.parkingId;
+    const startRaw = body.startTime ?? body.start;
+    const endRaw = body.endTime ?? body.end;
+    const totalPrice =
+      typeof body.totalPrice === "number"
+        ? body.totalPrice
+        : typeof body.amountChf === "number"
+        ? body.amountChf
+        : null;
+
+    if (!parkingId || !startRaw || !endRaw || totalPrice === null) {
+      return NextResponse.json(
+        {
+          error: "Missing/invalid fields",
+          expected: ["parkingId", "startTime|start", "endTime|end", "totalPrice|amountChf"],
+          got: body,
+        },
+        { status: 400 }
+      );
+    }
+
+    // 1) Vérifier l’utilisateur via le token (client anon)
+    const supabaseAuth = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false },
+    });
+
+    const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
+    if (uErr || !u.user) {
+      return NextResponse.json(
+        { error: "Unauthorized", detail: uErr?.message ?? "No user" },
+        { status: 401 }
+      );
+    }
+
+    const start = new Date(startRaw);
+    const end = new Date(endRaw);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
     }
@@ -36,21 +89,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "endTime must be after startTime" }, { status: 400 });
     }
 
-    // (Optionnel) arrondi/minimum ici si tu veux
+    // 2) Overlap check (best-effort)
+    const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
 
-    // ---- Option A: advisory lock + overlap check (utile même si Option B existe)
-    // Advisory locks sont par transaction, mais via supabase-js on ne contrôle pas une transaction facilement.
-    // Donc soit tu relies sur Option B (contraintes DB), soit tu fais overlap check simple (moins "béton").
-    // -> Pour rester simple et robuste : on fait un overlap check + on s'appuie sur Option B si activée.
-
-    // Overlap check "best effort" (évite beaucoup de conflits)
     const { data: overlap, error: overlapErr } = await supabaseAdmin
       .from("bookings")
       .select("id")
       .eq("parking_id", parkingId)
-      .in("status", ["pending_payment", "confirmed"])
-      .lt("start_time", end.toISOString())  // existing.start < new.end
-      .gt("end_time", start.toISOString())  // existing.end > new.start
+      .in("status", ["pending_payment", "confirmed", "pending", "confirmed"]) // tolérant
+      .lt("start_time", end.toISOString())
+      .gt("end_time", start.toISOString())
       .limit(1);
 
     if (overlapErr) {
@@ -63,11 +113,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // Créer le booking en pending_payment
+    // 3) Insert booking
     const { data: created, error: insertErr } = await supabaseAdmin
       .from("bookings")
       .insert({
-        user_id: userId,
+        user_id: u.user.id,
         parking_id: parkingId,
         start_time: start.toISOString(),
         end_time: end.toISOString(),
@@ -75,18 +125,15 @@ export async function POST(req: Request) {
         currency: body.currency ?? "CHF",
         status: "pending_payment",
         payment_status: "unpaid",
-        // Optionnel: expires_at: new Date(Date.now()+10*60*1000).toISOString()
       })
       .select("*")
       .single();
 
     if (insertErr) {
-      // Si Option B (EXCLUDE) est en place, une collision arrivera ici même si le check est passé.
-      // On renvoie 409 proprement.
       const msg = insertErr.message.toLowerCase();
-      if (msg.includes("bookings_no_overlap") || msg.includes("exclude") || msg.includes("conflict")) {
+      if (msg.includes("exclude") || msg.includes("conflict") || msg.includes("no_overlap")) {
         return NextResponse.json(
-          { error: "Ce créneau vient d’être pris par quelqu’un d’autre. Réessaie avec un autre horaire." },
+          { error: "Ce créneau vient d’être pris. Réessaie avec un autre horaire." },
           { status: 409 }
         );
       }
@@ -99,3 +146,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
+
