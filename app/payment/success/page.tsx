@@ -1,4 +1,5 @@
 import Link from "next/link";
+import SuccessClient from "./success-client";
 
 export default async function PaymentSuccessPage({
   searchParams,
@@ -11,12 +12,9 @@ export default async function PaymentSuccessPage({
 
   return (
     <main className="max-w-2xl mx-auto p-6 space-y-4">
-      <h1 className="text-2xl font-semibold">Paiement confirmé ✅</h1>
+      <h1 className="text-2xl font-semibold">Paiement reçu ✅</h1>
 
-      <p className="text-gray-700">
-        Merci ! Ton paiement a été accepté. La réservation sera confirmée dès que le webhook Stripe
-        est traité.
-      </p>
+      <p className="text-gray-700">On vérifie la confirmation de ta réservation…</p>
 
       <div className="text-xs border rounded p-3 space-y-1 text-gray-600">
         <div>
@@ -27,7 +25,9 @@ export default async function PaymentSuccessPage({
         </div>
       </div>
 
-      <div className="flex gap-4">
+      <SuccessClient bookingId={bookingId} />
+
+      <div className="flex gap-4 pt-2">
         <Link className="underline" href="/my-bookings">
           Voir mes réservations
         </Link>

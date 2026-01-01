@@ -140,7 +140,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: insertErr.message }, { status: 500 });
     }
 
-    return NextResponse.json({ booking: created }, { status: 200 });
+    return NextResponse.json(
+  { booking: created, bookingId: created.id },
+  { status: 200 }
+);
+
   } catch (e: unknown) {
     const errorMessage = e instanceof Error ? e.message : "Server error";
     return NextResponse.json({ error: errorMessage }, { status: 500 });
