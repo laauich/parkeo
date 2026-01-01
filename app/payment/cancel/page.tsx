@@ -13,14 +13,14 @@ export default async function PaymentCancelPage({
       <h1 className="text-2xl font-semibold">Paiement annulé</h1>
 
       <p className="text-gray-700">
-        Le paiement a été annulé. Ta réservation est restée en attente.
+        Aucun paiement n’a été effectué. Ta réservation reste en attente.
       </p>
 
       <div className="text-xs border rounded p-3 text-gray-600">
         <b>bookingId :</b> {bookingId || "(vide)"}
       </div>
 
-      <div className="flex gap-4">
+      <div className="flex gap-4 pt-2">
         <Link className="underline" href="/my-bookings">
           Voir mes réservations
         </Link>

@@ -1,8 +1,18 @@
+import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import BookingForm from "./booking-form";
-import Link from "next/link";
 
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+type ParkingRow = {
+  id: string;
+  title: string;
+  address: string;
+  price_hour: number;
+  price_day: number | null;
+  instructions: string | null;
+  is_active: boolean;
+};
 
 export default async function ParkingDetailPage({
   params,
@@ -11,81 +21,66 @@ export default async function ParkingDetailPage({
 }) {
   const { id } = await params;
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !anon) {
-    return (
-      <main className="max-w-3xl mx-auto p-6 space-y-3">
-        <p className="text-red-600 font-medium">Config Supabase manquante sur Vercel.</p>
-        <p className="text-sm text-gray-700">
-          Vérifie les variables : <b>NEXT_PUBLIC_SUPABASE_URL</b> et{" "}
-          <b>NEXT_PUBLIC_SUPABASE_ANON_KEY</b>.
-        </p>
-        <p className="text-xs text-gray-500">id: {id}</p>
-        <Link className="underline" href="/parkings">Retour</Link>
-      </main>
-    );
-  }
-
-  const supabase = createClient(url, anon);
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
   const { data: parking, error } = await supabase
     .from("parkings")
-    .select("id,title,address,city,price_hour,price_day,instructions,is_active")
+    .select("id,title,address,price_hour,price_day,instructions,is_active")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (error || !parking) {
     return (
-      <main className="max-w-3xl mx-auto p-6 space-y-3">
-        <p className="text-red-600 font-medium">Parking introuvable.</p>
-        <p className="text-sm text-gray-700">
-          Cela arrive si l’ID n’existe pas dans Supabase, ou si Vercel pointe vers un autre projet.
-        </p>
-
-        <div className="text-xs text-gray-600 border rounded p-3 space-y-1">
-          <div><b>id reçu :</b> {id}</div>
-          <div><b>Supabase URL :</b> {url}</div>
-          <div><b>Erreur Supabase :</b> {error?.message ?? "(aucune)"} </div>
-        </div>
-
-        <Link className="underline" href="/parkings">Retour</Link>
+      <main className="max-w-3xl mx-auto p-6">
+        <p className="text-red-600">Parking introuvable.</p>
+        <Link className="underline" href="/parkings">
+          Retour
+        </Link>
       </main>
     );
   }
 
+  const p = parking as ParkingRow;
+
   return (
     <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="border rounded p-4">
-        <h1 className="text-2xl font-semibold">{parking.title}</h1>
-        <p className="text-sm text-gray-600">
-          {parking.address} {parking.city ? `· ${parking.city}` : ""}
+      <div className="border rounded p-4 space-y-2">
+        <h1 className="text-2xl font-semibold">{p.title}</h1>
+        <p className="text-sm text-gray-600">{p.address}</p>
+        <p className="text-sm">
+          💰 <b>{Number(p.price_hour).toFixed(2)} CHF</b> / h
+          {p.price_day ? (
+            <>
+              {" "}
+              · <b>{Number(p.price_day).toFixed(2)} CHF</b> / jour
+            </>
+          ) : null}
         </p>
 
-        <p className="mt-2">
-          💰 {Number(parking.price_hour).toFixed(2)} CHF / h
-          {parking.price_day ? ` · ${Number(parking.price_day).toFixed(2)} CHF / jour` : ""}
-        </p>
-
-        {parking.instructions && (
-          <p className="mt-3 text-sm">
-            <span className="font-medium">Instructions :</span>{" "}
-            {parking.instructions}
+        {p.instructions ? (
+          <p className="text-sm">
+            <span className="font-medium">Instructions :</span> {p.instructions}
           </p>
-        )}
+        ) : null}
       </div>
 
       <div className="border rounded p-4">
-        <h2 className="text-lg font-semibold">Réserver</h2>
+        <h2 className="text-lg font-semibold mb-3">Réserver</h2>
+
         <BookingForm
-          parkingId={parking.id}
-          parkingTitle={parking.title}
-          priceHour={Number(parking.price_hour)}
+          parkingId={p.id}
+          parkingTitle={p.title}
+          priceHour={Number(p.price_hour)}
+          priceDay={p.price_day ? Number(p.price_day) : null}
         />
       </div>
 
-      <Link className="underline" href="/parkings">← Retour à la liste</Link>
+      <Link className="underline" href="/parkings">
+        ← Retour à la liste
+      </Link>
     </main>
   );
 }
