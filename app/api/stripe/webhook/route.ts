@@ -5,85 +5,91 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function getEnv(name: string) {
+function env(name: string) {
   const v = process.env[name];
-  return v && v.trim().length > 0 ? v : null;
-}
-
-function errorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return "Unknown error";
-  }
-}
-
-function supabaseAdmin() {
-  const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const service = getEnv("SUPABASE_SERVICE_ROLE_KEY");
-  if (!url || !service) throw new Error("Missing Supabase env");
-  return createClient(url, service, { auth: { persistSession: false } });
+  if (!v || !v.trim()) throw new Error(`ENV manquante: ${name}`);
+  return v;
 }
 
 export async function POST(req: Request) {
   try {
-    const stripeKey = getEnv("STRIPE_SECRET_KEY");
-    const webhookSecret = getEnv("STRIPE_WEBHOOK_SECRET");
+    const stripeKey = env("STRIPE_SECRET_KEY");
+    const webhookSecret = env("STRIPE_WEBHOOK_SECRET");
+    const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
+    const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!stripeKey) {
-      return NextResponse.json({ error: "Missing STRIPE_SECRET_KEY" }, { status: 500 });
-    }
-    if (!webhookSecret) {
-      return NextResponse.json({ error: "Missing STRIPE_WEBHOOK_SECRET" }, { status: 500 });
-    }
+    const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
 
+    // ⚠️ Webhook: raw body obligatoire
+    const rawBody = await req.text();
     const sig = req.headers.get("stripe-signature");
     if (!sig) {
-      return NextResponse.json({ error: "Missing stripe-signature" }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "Missing stripe-signature" }, { status: 400 });
     }
-
-    const rawBody = await req.text();
-    const stripe = new Stripe(stripeKey);
 
     let event: Stripe.Event;
     try {
       event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
-    } catch (e: unknown) {
+    } catch (err: unknown) {
       return NextResponse.json(
-        { error: "Signature verification failed", detail: errorMessage(e) },
+        { ok: false, error: err instanceof Error ? err.message : "Invalid signature" },
         { status: 400 }
       );
     }
 
+    const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
+
+    // On gère le cas principal
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
-      const bookingId = session.metadata?.bookingId;
 
-      if (bookingId) {
-        const supabase = supabaseAdmin();
+      const bookingId =
+        (session.metadata?.bookingId as string | undefined) ??
+        (typeof session.client_reference_id === "string"
+          ? session.client_reference_id
+          : undefined);
 
-        const { error } = await supabase
-          .from("bookings")
-          .update({
-            payment_status: "paid",
-            status: "confirmed",
-            stripe_session_id: session.id,
-            currency: session.currency ?? "chf",
-          })
-          .eq("id", bookingId);
-
-        if (error) {
-          return NextResponse.json(
-            { error: "Supabase update failed", detail: error.message },
-            { status: 500 }
-          );
-        }
+      if (!bookingId) {
+        return NextResponse.json({ ok: false, error: "Missing bookingId in metadata" }, { status: 200 });
       }
+
+      // ✅ Marquer payé + confirmé
+      const { error } = await supabaseAdmin
+        .from("bookings")
+        .update({
+          payment_status: "paid",
+          status: "confirmed",
+          stripe_session_id: session.id,
+        })
+        .eq("id", bookingId);
+
+      if (error) {
+        return NextResponse.json({ ok: false, error: error.message }, { status: 200 });
+      }
+
+      return NextResponse.json({ ok: true }, { status: 200 });
     }
 
-    return NextResponse.json({ received: true }, { status: 200 });
+    // Optionnel: payment failed / expired
+    if (event.type === "checkout.session.expired") {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const bookingId = session.metadata?.bookingId as string | undefined;
+      if (bookingId) {
+        await supabaseAdmin
+          .from("bookings")
+          .update({ status: "expired", payment_status: "unpaid", stripe_session_id: session.id })
+          .eq("id", bookingId);
+      }
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
+    return NextResponse.json({ ok: true, ignored: event.type }, { status: 200 });
   } catch (e: unknown) {
-    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : "Server error" },
+      { status: 500 }
+    );
   }
 }

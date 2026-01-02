@@ -1,11 +1,10 @@
-// app/api/bookings/create/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function env(name: string): string {
+function env(name: string) {
   const v = process.env[name];
   if (!v || !v.trim()) throw new Error(`ENV manquante: ${name}`);
   return v;
@@ -19,16 +18,13 @@ function getBearerToken(req: Request): string | null {
 
 type Body = {
   parkingId?: string;
-
-  start?: string; // datetime-local ou ISO
+  start?: string; // datetime-local
   end?: string;
   startTime?: string; // ISO
-  endTime?: string; // ISO
-
+  endTime?: string;   // ISO
   totalPrice?: number;
   amountChf?: number;
-
-  currency?: string; // default "CHF"
+  currency?: string;  // default CHF
 };
 
 export async function POST(req: Request) {
@@ -40,7 +36,7 @@ export async function POST(req: Request) {
     const token = getBearerToken(req);
     if (!token) {
       return NextResponse.json(
-        { error: "Unauthorized", detail: "Missing Authorization: Bearer <token>" },
+        { error: "Unauthorized", detail: "Missing Authorization Bearer token" },
         { status: 401 }
       );
     }
@@ -51,14 +47,14 @@ export async function POST(req: Request) {
     const startRaw = body.startTime ?? body.start;
     const endRaw = body.endTime ?? body.end;
 
-    const totalPrice =
+    const total =
       typeof body.totalPrice === "number"
         ? body.totalPrice
         : typeof body.amountChf === "number"
         ? body.amountChf
         : null;
 
-    if (!parkingId || !startRaw || !endRaw || totalPrice === null) {
+    if (!parkingId || !startRaw || !endRaw || total === null) {
       return NextResponse.json(
         {
           error: "Missing/invalid fields",
@@ -69,39 +65,38 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Récupérer l'utilisateur depuis le token (client anon)
+    // 1) Auth: récupérer l’utilisateur à partir du token (anon)
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
     });
 
-    const { data: userData, error: userErr } = await supabaseAuth.auth.getUser();
-    const user = userData?.user;
-
-    if (userErr || !user) {
+    const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
+    if (uErr || !u.user) {
       return NextResponse.json(
-        { error: "Unauthorized", detail: userErr?.message ?? "No user" },
+        { error: "Unauthorized", detail: uErr?.message ?? "No user" },
         { status: 401 }
       );
     }
 
-    // 2) Valider les dates
     const start = new Date(startRaw);
     const end = new Date(endRaw);
-
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
     }
     if (end <= start) {
       return NextResponse.json({ error: "endTime must be after startTime" }, { status: 400 });
     }
+    if (!(typeof total === "number") || Number.isNaN(total) || total <= 0) {
+      return NextResponse.json({ error: "Invalid total price" }, { status: 400 });
+    }
 
-    // 3) Admin client (service role)
+    // 2) Admin: overlap check + insert
     const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
 
-    // 4) Overlap check
+    // overlap best-effort
     const { data: overlap, error: overlapErr } = await supabaseAdmin
       .from("bookings")
       .select("id")
@@ -121,44 +116,36 @@ export async function POST(req: Request) {
       );
     }
 
-    // 5) Insert booking (⚠️ sans .single() => évite "Cannot coerce...")
-    const { data: rows, error: insertErr } = await supabaseAdmin
+    const { data: created, error: insErr } = await supabaseAdmin
       .from("bookings")
       .insert({
-        user_id: user.id,
+        user_id: u.user.id,
         parking_id: parkingId,
         start_time: start.toISOString(),
         end_time: end.toISOString(),
-        total_price: totalPrice,
+        total_price: total,
         currency: body.currency ?? "CHF",
         status: "pending_payment",
         payment_status: "unpaid",
       })
-      .select("*");
+      .select("id,parking_id,status,payment_status,total_price,currency,start_time,end_time,created_at")
+      .single();
 
-    if (insertErr) {
-      const msg = insertErr.message.toLowerCase();
-      if (msg.includes("exclude") || msg.includes("conflict") || msg.includes("no_overlap")) {
-        return NextResponse.json(
-          { error: "Ce créneau vient d’être pris. Réessaie avec un autre horaire." },
-          { status: 409 }
-        );
-      }
-      return NextResponse.json({ error: insertErr.message }, { status: 500 });
-    }
-
-    const created = Array.isArray(rows) ? rows[0] : null;
-    if (!created) {
-      // cas rare : insert ok mais rien retourné
+    if (insErr || !created) {
       return NextResponse.json(
-        { error: "Insert ok but no row returned (check RLS/returning)" },
+        { error: insErr?.message ?? "Insert booking failed" },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ booking: created, bookingId: created.id }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, booking: created, bookingId: created.id },
+      { status: 200 }
+    );
   } catch (e: unknown) {
-    const errorMessage = e instanceof Error ? e.message : "Server error";
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : "Server error" },
+      { status: 500 }
+    );
   }
 }

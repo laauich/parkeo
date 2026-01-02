@@ -1,101 +1,76 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { useAuth } from "@/app/providers/AuthProvider";
+import { UI } from "@/app/components/ui";
 
 type Props = {
   parkingId: string;
-  parkingTitle: string;
   priceHour: number;
   priceDay: number | null;
+  parkingTitle?: string;
 };
-
-function round2(n: number) {
-  return Math.round(n * 100) / 100;
-}
-
-function computePriceChf(
-  startISO: string,
-  endISO: string,
-  priceHour: number,
-  priceDay: number | null
-) {
-  const s = Date.parse(startISO);
-  const e = Date.parse(endISO);
-  if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 0;
-
-  const ms = e - s;
-  const hours = ms / (1000 * 60 * 60);
-  const days = ms / (1000 * 60 * 60 * 24);
-
-  // MVP simple :
-  // - si priceDay existe et durée >= 24h, on facture par jour (arrondi au jour supérieur)
-  // - sinon par heure (arrondi au 1/4 d’heure supérieur)
-  if (priceDay && days >= 1) {
-    const dayCount = Math.ceil(days);
-    return round2(dayCount * priceDay);
-  }
-
-  const quarterHours = Math.ceil(hours * 4) / 4;
-  return round2(quarterHours * priceHour);
-}
-
-type CreateBookingResponse =
-  | { bookingId: string; booking?: { id: string } }
-  | { error: string; detail?: string };
-
-type CheckoutResponse =
-  | { url: string }
-  | { error: string; detail?: string };
 
 export default function BookingForm({
   parkingId,
-  parkingTitle,
   priceHour,
   priceDay,
+  parkingTitle,
 }: Props) {
-  const [start, setStart] = useState<string>("");
-  const [end, setEnd] = useState<string>("");
+  const { ready, session, supabase } = useAuth();
 
-  const [loading, setLoading] = useState<boolean>(false);
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 💰 Calcul du prix
   const amountChf = useMemo(() => {
     if (!start || !end) return 0;
-    // datetime-local -> Date.parse ok (interpreted local), on envoie tel quel à l’API qui convertit
-    return computePriceChf(start, end, priceHour, priceDay);
+
+    const s = new Date(start).getTime();
+    const e = new Date(end).getTime();
+
+    if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return 0;
+
+    const hours = Math.ceil((e - s) / (1000 * 60 * 60));
+
+    if (priceDay && hours >= 24) {
+      const days = Math.ceil(hours / 24);
+      return days * priceDay;
+    }
+
+    return hours * priceHour;
   }, [start, end, priceHour, priceDay]);
 
-  const onPayAndBook = async (e: React.FormEvent) => {
+  const canSubmit =
+    ready &&
+    session &&
+    !!start &&
+    !!end &&
+    amountChf > 0 &&
+    !loading;
+
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!start || !end) {
-      setError("Choisis une date de début et de fin.");
+    if (!ready) return;
+    if (!session) {
+      setError("Tu dois être connecté pour réserver.");
       return;
     }
-    if (amountChf <= 0) {
-      setError("Dates invalides (la fin doit être après le début).");
-      return;
-    }
+    if (!canSubmit) return;
 
     setLoading(true);
 
     try {
-      const supabase = supabaseBrowser();
+      // 1) Créer le booking
+      const token = (await supabase.auth.getSession()).data.session?.access_token;
+      if (!token) throw new Error("Session invalide");
 
-      // 0) session + token
-      const { data: sData, error: sErr } = await supabase.auth.getSession();
-      const token = sData.session?.access_token;
-
-      if (sErr || !token) {
-        setLoading(false);
-        setError("Tu dois être connecté pour réserver.");
-        return;
-      }
-
-      // 1) create booking (server)
-      const r1 = await fetch("/api/bookings/create", {
+      const res = await fetch("/api/bookings/create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -110,25 +85,16 @@ export default function BookingForm({
         }),
       });
 
-      const j1 = (await r1.json().catch(() => ({}))) as CreateBookingResponse;
+      const json = await res.json();
 
-      if (!r1.ok) {
-        setLoading(false);
-        setError("error" in j1 ? j1.error : `Erreur réservation (${r1.status})`);
-        return;
+      if (!res.ok) {
+        throw new Error(json?.error ?? "Erreur création réservation");
       }
 
-      const bookingId =
-        "bookingId" in j1 ? j1.bookingId : undefined;
+      const bookingId = json.bookingId;
 
-      if (!bookingId) {
-        setLoading(false);
-        setError(`Réservation créée mais bookingId manquant (status ${r1.status}).`);
-        return;
-      }
-
-      // 2) create Stripe checkout
-      const r2 = await fetch("/api/stripe/checkout", {
+      // 2) Stripe checkout
+      const payRes = await fetch("/api/stripe/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -139,67 +105,69 @@ export default function BookingForm({
         }),
       });
 
-      const j2 = (await r2.json().catch(() => ({}))) as CheckoutResponse;
+      const payJson = await payRes.json();
 
-      if (!r2.ok) {
-        setLoading(false);
-        setError("error" in j2 ? j2.error : `Erreur paiement (${r2.status})`);
-        return;
+      if (!payRes.ok || !payJson?.url) {
+        throw new Error(payJson?.error ?? "Erreur Stripe Checkout");
       }
 
-      if (!("url" in j2) || !j2.url) {
-        setLoading(false);
-        setError("Stripe: URL manquante.");
-        return;
-      }
-
-      // 3) redirect Stripe
-      window.location.assign(j2.url);
+      // 3) Redirection Stripe
+      window.location.href = payJson.url;
     } catch (err: unknown) {
-      setLoading(false);
       setError(err instanceof Error ? err.message : "Erreur inconnue");
+      setLoading(false);
     }
   };
 
   return (
-    <form onSubmit={onPayAndBook} className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-sm">
-          Début
-          <input
-            className="mt-1 w-full border rounded px-3 py-2"
-            type="datetime-local"
-            value={start}
-            onChange={(e) => setStart(e.target.value)}
-            disabled={loading}
-          />
+    <form onSubmit={onSubmit} className="space-y-4">
+      {/* DATE DE DÉBUT */}
+      <div className="space-y-1">
+        <label className="text-sm font-medium">
+          Début (date & heure)
         </label>
-
-        <label className="text-sm">
-          Fin
-          <input
-            className="mt-1 w-full border rounded px-3 py-2"
-            type="datetime-local"
-            value={end}
-            onChange={(e) => setEnd(e.target.value)}
-            disabled={loading}
-          />
-        </label>
+        <input
+          type="datetime-local"
+          value={start}
+          onChange={(e) => setStart(e.target.value)}
+          className="border rounded px-3 py-3 w-full text-base"
+        />
       </div>
 
-      <div className="text-sm text-gray-700">
-        Prix estimé : <b>{amountChf.toFixed(2)} CHF</b>
+      {/* DATE DE FIN */}
+      <div className="space-y-1">
+        <label className="text-sm font-medium">
+          Fin (date & heure)
+        </label>
+        <input
+          type="datetime-local"
+          value={end}
+          onChange={(e) => setEnd(e.target.value)}
+          className="border rounded px-3 py-3 w-full text-base"
+        />
       </div>
 
+      {/* PRIX */}
+      <div className="text-sm">
+        <span className="font-medium">Prix estimé :</span>{" "}
+        <b>{amountChf > 0 ? `${amountChf} CHF` : "—"}</b>
+      </div>
+
+      {/* ERREUR */}
+      {error && (
+        <p className="text-sm text-red-600">
+          Erreur : {error}
+        </p>
+      )}
+
+      {/* BOUTON */}
       <button
         type="submit"
-        disabled={loading}
-        className="border rounded px-4 py-2"
+        className={UI.btnPrimary}
+        disabled={!canSubmit}
       >
-        {loading ? "Redirection vers paiement..." : "Payer et réserver"}
+        {loading ? "Redirection vers le paiement…" : "Payer et réserver"}
       </button>
-
-      {error && <p className="text-red-600 text-sm">Erreur : {error}</p>}
 
       <p className="text-xs text-gray-500">
         Le paiement confirme automatiquement la réservation.

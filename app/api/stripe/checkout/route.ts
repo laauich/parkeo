@@ -1,51 +1,80 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function env(name: string) {
+  const v = process.env[name];
+  if (!v || !v.trim()) throw new Error(`ENV manquante: ${name}`);
+  return v;
+}
+
+function siteUrl() {
+  // Recommandé : NEXT_PUBLIC_SITE_URL dans Vercel
+  // En dev: http://localhost:3000
+  const v = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (v) return v.replace(/\/+$/, "");
+  return "http://localhost:3000";
+}
 
 type Body = {
-  bookingId: string;
-  parkingTitle: string;
-  amountChf: number;
-  currency?: string;
+  bookingId?: string;
+  parkingTitle?: string;
+  amountChf?: number; // CHF
+  currency?: string; // "chf"
 };
-
-function getEnv(name: string) {
-  const v = process.env[name];
-  return v && v.trim().length > 0 ? v : null;
-}
 
 export async function POST(req: Request) {
   try {
-    const stripeKey = getEnv("STRIPE_SECRET_KEY");
-    const appUrl = getEnv("NEXT_PUBLIC_APP_URL");
-
-    if (!stripeKey) {
-      return NextResponse.json(
-        { ok: false, where: "env", error: "Missing STRIPE_SECRET_KEY" },
-        { status: 500 }
-      );
-    }
-    if (!appUrl) {
-      return NextResponse.json(
-        { ok: false, where: "env", error: "Missing NEXT_PUBLIC_APP_URL" },
-        { status: 500 }
-      );
-    }
-
-    const stripe = new Stripe(stripeKey);
+    const stripeKey = env("STRIPE_SECRET_KEY");
+    const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
+    const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
     const body = (await req.json()) as Body;
+    const bookingId = body.bookingId;
+    const amountChf = typeof body.amountChf === "number" ? body.amountChf : null;
 
-    if (!body.bookingId || !body.parkingTitle || !body.amountChf) {
+    if (!bookingId || amountChf === null || Number.isNaN(amountChf) || amountChf <= 0) {
       return NextResponse.json(
-        { ok: false, where: "body", error: "Missing fields" },
+        { error: "Missing/invalid fields", expected: ["bookingId", "amountChf>0"] },
         { status: 400 }
       );
     }
 
     const currency = (body.currency ?? "chf").toLowerCase();
-    const unitAmount = Math.round(body.amountChf * 100);
+    const amountCents = Math.round(amountChf * 100);
+
+    const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+
+    // On récupère la réservation pour vérifier qu'elle existe
+    const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
+
+    const { data: booking, error: bErr } = await supabaseAdmin
+      .from("bookings")
+      .select("id,status,payment_status,total_price,currency,parking_id")
+      .eq("id", bookingId)
+      .maybeSingle();
+
+    if (bErr) {
+      return NextResponse.json({ error: bErr.message }, { status: 500 });
+    }
+    if (!booking) {
+      return NextResponse.json({ error: "Booking introuvable" }, { status: 404 });
+    }
+
+    // Optionnel : empêcher checkout si déjà payé
+    if (booking.payment_status === "paid") {
+      return NextResponse.json(
+        { error: "Booking déjà payé", bookingId },
+        { status: 409 }
+      );
+    }
+
+    const base = siteUrl();
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -55,27 +84,44 @@ export async function POST(req: Request) {
           quantity: 1,
           price_data: {
             currency,
-            unit_amount: unitAmount,
+            unit_amount: amountCents,
             product_data: {
-              name: `Réservation : ${body.parkingTitle}`,
+              name: body.parkingTitle
+                ? `Réservation — ${body.parkingTitle}`
+                : "Réservation parking",
+              description: `Booking ${bookingId}`,
             },
           },
         },
       ],
-      success_url: `${appUrl}/payment/success?bookingId=${encodeURIComponent(
-        body.bookingId
+      // IMPORTANT : URLs
+      success_url: `${base}/payment/success?bookingId=${encodeURIComponent(
+        bookingId
       )}&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appUrl}/payment/cancel?bookingId=${encodeURIComponent(
-        body.bookingId
+      cancel_url: `${base}/payment/cancel?bookingId=${encodeURIComponent(
+        bookingId
       )}`,
-      metadata: { bookingId: body.bookingId },
+
+      // Metadata utile webhook
+      metadata: {
+        bookingId,
+      },
     });
 
-    return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
+    // Sauvegarde session_id dans booking (pratique)
+    await supabaseAdmin
+      .from("bookings")
+      .update({
+        stripe_session_id: session.id,
+        status: "pending_payment",
+        payment_status: "unpaid",
+      })
+      .eq("id", bookingId);
+
+    return NextResponse.json({ url: session.url }, { status: 200 });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json(
-      { ok: false, where: "exception", error: msg },
+      { error: e instanceof Error ? e.message : "Server error" },
       { status: 500 }
     );
   }
