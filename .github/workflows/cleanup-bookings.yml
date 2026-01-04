@@ -1,0 +1,17 @@
+name: Daily bookings cleanup
+
+on:
+  schedule:
+    # Tous les jours à 03:00 UTC (05:00 Genève en hiver)
+    - cron: "0 3 * * *"
+  workflow_dispatch: # bouton manuel (optionnel mais utile)
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call cleanup endpoint
+        run: |
+          curl -X GET "https://parkeo.vercel.app/api/bookings/cleanup-cron" \
+            -H "x-cleanup-secret: parkeo_cleanup_secret"
