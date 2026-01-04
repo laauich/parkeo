@@ -9,6 +9,7 @@ type ParkingRow = {
   owner_id: string;
   title: string;
   instructions: string | null;
+  address: string;
 
   street: string | null;
   street_number: string | null;
@@ -47,7 +48,7 @@ export default async function EditParkingPage({
   const { data: parking, error } = await supabase
     .from("parkings")
     .select(
-      "id,owner_id,title,instructions,street,street_number,postal_code,city,parking_type,is_covered,has_ev_charger,is_secure,is_lit,price_hour,price_day,photos,lat,lng,is_active"
+      "id,owner_id,title,instructions,address,street,street_number,postal_code,city,parking_type,is_covered,has_ev_charger,is_secure,is_lit,price_hour,price_day,photos,lat,lng,is_active"
     )
     .eq("id", id)
     .maybeSingle();

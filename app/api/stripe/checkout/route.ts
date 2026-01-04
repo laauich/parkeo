@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     const currency = (body.currency ?? "chf").toLowerCase();
     const amountCents = Math.round(amountChf * 100);
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+    const stripe = new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" });
 
     // On récupère la réservation pour vérifier qu'elle existe
     const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
@@ -107,6 +107,11 @@ export async function POST(req: Request) {
         bookingId,
       },
     });
+// Sauvegarde la session Stripe sur le booking (pour refunds)
+await supabaseAdmin
+  .from("bookings")
+  .update({ stripe_session_id: session.id })
+  .eq("id", bookingId);
 
     // Sauvegarde session_id dans booking (pratique)
     await supabaseAdmin

@@ -18,7 +18,7 @@ export async function POST(req: Request) {
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
     const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+    const stripe = new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" });
 
     // ⚠️ Webhook: raw body obligatoire
     const rawBody = await req.text();

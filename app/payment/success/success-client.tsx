@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Booking = {
@@ -17,15 +19,37 @@ function isUuid(v: string) {
   );
 }
 
+function clearAllPendingKeys() {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("parkeo:pending:")) keys.push(k);
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+    return keys.length;
+  } catch {
+    return 0;
+  }
+}
+
 export default function SuccessClient({ bookingId }: { bookingId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
+  const router = useRouter();
+
   const [state, setState] = useState<State>("loading");
   const [msg, setMsg] = useState<string>("");
 
-  // ✅ Validation hors useEffect (pas de setState synchrones dans l’effet)
+  // (optionnel) debug
+  const [cleanupInfo, setCleanupInfo] = useState<string>("");
+
+  // empêcher double redirection si re-render
+  const redirectedRef = useRef(false);
+
   const validation = useMemo(() => {
     if (!bookingId) return { ok: false, message: "bookingId manquant." };
-    if (!isUuid(bookingId)) return { ok: false, message: "bookingId invalide (UUID attendu)." };
+    if (!isUuid(bookingId))
+      return { ok: false, message: "bookingId invalide (UUID attendu)." };
     return { ok: true, message: "" };
   }, [bookingId]);
 
@@ -60,6 +84,23 @@ export default function SuccessClient({ bookingId }: { bookingId: string }) {
       if (b.payment_status === "paid" && b.status === "confirmed") {
         setState("confirmed");
         setMsg("Réservation confirmée ✅");
+
+        // ✅ Nettoyage + redirection vers mes réservations
+        if (!redirectedRef.current) {
+          redirectedRef.current = true;
+
+          queueMicrotask(() => {
+            const n = clearAllPendingKeys();
+            setCleanupInfo(
+              n > 0 ? `Nettoyage OK (${n} lock(s) supprimé(s))` : "Nettoyage OK"
+            );
+
+            // petit délai pour afficher le message confirmé
+            setTimeout(() => {
+              router.push("/my-bookings");
+            }, 1200);
+          });
+        }
       } else {
         setState("pending");
         setMsg(`En attente… (status=${b.status}, paiement=${b.payment_status})`);
@@ -76,16 +117,32 @@ export default function SuccessClient({ bookingId }: { bookingId: string }) {
       clearInterval(interval);
       clearTimeout(timeout);
     };
-  }, [bookingId, supabase, validation.ok]);
+  }, [bookingId, supabase, validation.ok, router]);
 
-  // ✅ UI directe si invalide
   if (!validation.ok) {
     return <p className="text-red-600 text-sm">Erreur : {validation.message}</p>;
   }
 
-  if (state === "confirmed") return <p className="text-green-700 font-medium">{msg}</p>;
-  if (state === "pending" || state === "loading")
+  if (state === "confirmed") {
+    return (
+      <div className="space-y-2">
+        <p className="text-green-700 font-medium">{msg}</p>
+        <p className="text-sm text-gray-600">
+          Redirection vers <b>Mes réservations</b>…
+        </p>
+        {cleanupInfo ? <p className="text-xs text-gray-500">{cleanupInfo}</p> : null}
+        <div className="pt-1">
+          <Link className="underline text-sm" href="/my-bookings">
+            Aller tout de suite →
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "pending" || state === "loading") {
     return <p className="text-sm text-gray-700">{msg || "Vérification en cours…"}</p>;
+  }
 
   return <p className="text-red-600 text-sm">Erreur : {msg}</p>;
 }

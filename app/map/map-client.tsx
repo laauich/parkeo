@@ -2,7 +2,7 @@
 
 import "leaflet/dist/leaflet.css";
 import { MapContainer, TileLayer, Marker, Popup, Circle } from "react-leaflet";
-import L, { Map as LeafletMap } from "leaflet";
+import L, { Map as LeafletMap, Marker as LeafletMarker } from "leaflet";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
@@ -146,10 +146,12 @@ function userIcon() {
 export default function MapClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
 
-  // ✅ on garde l'instance Leaflet ici
+  // Leaflet map ref
   const mapRef = useRef<LeafletMap | null>(null);
 
-  // ✅ function-ref compatible avec react-leaflet (à la place de whenCreated)
+  // Markers refs by id (to open popup immediately)
+  const markerRefs = useRef<Record<string, LeafletMarker | null>>({});
+
   const setMapRef = (m: LeafletMap | null) => {
     mapRef.current = m;
   };
@@ -160,17 +162,15 @@ export default function MapClient() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Position utilisateur
+  // User position
   const [me, setMe] = useState<{ lat: number; lng: number } | null>(null);
   const [geoStatus, setGeoStatus] = useState<string>("");
 
-  // Rayon filtre (km) : 0 = tout
+  // radius (km). 0 = all
   const [radiusKm, setRadiusKm] = useState<number>(2);
 
-  // Centre Genève par défaut
   const center: [number, number] = [46.2044, 6.1432];
 
-  // Filtrage "autour de moi" si me != null et radiusKm > 0
   const visibleRows = useMemo(() => {
     if (!me) return rows;
     if (!radiusKm || radiusKm <= 0) return rows;
@@ -188,11 +188,6 @@ export default function MapClient() {
         (p) => typeof p.lat === "number" && typeof p.lng === "number"
       ),
     [visibleRows]
-  );
-
-  const selected = useMemo(
-    () => visibleRowsWithCoords.find((p) => p.id === selectedId) ?? null,
-    [visibleRowsWithCoords, selectedId]
   );
 
   const load = async () => {
@@ -232,25 +227,61 @@ export default function MapClient() {
     }
 
     setLoading(false);
+
+    // After data loads, Leaflet sometimes needs a resize recalculation
+    queueMicrotask(() => {
+      mapRef.current?.invalidateSize();
+    });
   };
 
-  // ✅ FIX ESLint: ne pas appeler load() "synchronously" dans l'effet
+  // initial load
   useEffect(() => {
-    queueMicrotask(() => {
-      void load();
-    });
+    queueMicrotask(() => void load());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Centre la carte sur la place sélectionnée
+  // Fix sizing on resize
   useEffect(() => {
-    if (!selected || !mapRef.current) return;
-    mapRef.current.setView(
-      [selected.lat as number, selected.lng as number],
-      Math.max(mapRef.current.getZoom(), 14),
-      { animate: true }
-    );
-  }, [selected]);
+    const onResize = () => mapRef.current?.invalidateSize();
+    window.addEventListener("resize", onResize);
+
+    // also invalidate shortly after mount (grid/layout settle)
+    const t1 = window.setTimeout(() => mapRef.current?.invalidateSize(), 150);
+    const t2 = window.setTimeout(() => mapRef.current?.invalidateSize(), 600);
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, []);
+
+  // ✅ Single selection handler: list OR marker
+  const selectParking = (p: Parking) => {
+    setSelectedId(p.id);
+
+    if (mapRef.current && typeof p.lat === "number" && typeof p.lng === "number") {
+      const targetZoom = 16;
+
+      // Stronger, clearer move than setView
+      mapRef.current.flyTo([p.lat, p.lng], targetZoom, {
+        animate: true,
+        duration: 0.6,
+      });
+
+      // After selection, open popup and slightly pan up so it's well centered
+      window.setTimeout(() => {
+        mapRef.current?.invalidateSize();
+
+        // Offset so marker+popup are nicely visible (upwards)
+        // Negative y pans up
+        mapRef.current?.panBy([0, -120], { animate: true });
+
+        const marker = markerRefs.current[p.id];
+        marker?.openPopup();
+      }, 250);
+    }
+  };
 
   const locateMe = () => {
     setGeoStatus("");
@@ -269,7 +300,8 @@ export default function MapClient() {
         setGeoStatus("Position détectée ✅");
 
         if (mapRef.current) {
-          mapRef.current.setView([lat, lng], 14, { animate: true });
+          mapRef.current.flyTo([lat, lng], 14, { animate: true, duration: 0.7 });
+          window.setTimeout(() => mapRef.current?.invalidateSize(), 200);
         }
       },
       (err) => {
@@ -286,7 +318,9 @@ export default function MapClient() {
     setMe(null);
     setGeoStatus("");
     setRadiusKm(2);
-    if (mapRef.current) mapRef.current.setView(center, 12, { animate: true });
+    setSelectedId(null);
+    if (mapRef.current) mapRef.current.flyTo(center, 12, { animate: true, duration: 0.6 });
+    window.setTimeout(() => mapRef.current?.invalidateSize(), 200);
   };
 
   return (
@@ -295,7 +329,7 @@ export default function MapClient() {
         <div>
           <h1 className="text-2xl font-semibold">Carte des parkings</h1>
           <p className="text-sm text-gray-600">
-            Cliquez sur une place pour la localiser sur la carte
+            Un clic sur une place (liste ou voiture) → recentre + zoom + affiche détails
           </p>
           {geoStatus ? (
             <p className="text-xs text-gray-500 mt-1">{geoStatus}</p>
@@ -312,7 +346,7 @@ export default function MapClient() {
         </div>
       </header>
 
-      {/* Barre "Autour de moi" */}
+      {/* Autour de moi */}
       <section className="border rounded p-4 flex flex-wrap items-center gap-3">
         <button type="button" className={UI.btnPrimary} onClick={locateMe}>
           📍 Autour de moi
@@ -348,9 +382,10 @@ export default function MapClient() {
 
       {error && <p className="text-sm text-red-600">Erreur : {error}</p>}
 
-      <div className="grid lg:grid-cols-2 gap-4" style={{ minHeight: 520 }}>
-        {/* ===== LISTE ===== */}
-        <section className="border rounded p-4 overflow-auto">
+      {/* ✅ layout + height stable */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        {/* LISTE */}
+        <section className="border rounded p-4 overflow-auto" style={{ maxHeight: "75vh" }}>
           <div className="flex items-center justify-between mb-3">
             <div className="font-medium text-sm">
               Places disponibles{" "}
@@ -371,7 +406,7 @@ export default function MapClient() {
                 <button
                   key={p.id}
                   type="button"
-                  onClick={() => setSelectedId(p.id)}
+                  onClick={() => selectParking(p)}
                   className={`w-full text-left border rounded overflow-hidden transition ${
                     active ? "ring-2 ring-black" : "hover:bg-gray-50"
                   }`}
@@ -445,53 +480,58 @@ export default function MapClient() {
           </div>
         </section>
 
-        {/* ===== MAP ===== */}
+        {/* MAP (hauteur responsive + 100% inside) */}
         <section className="border rounded overflow-hidden">
-          <MapContainer
-            ref={setMapRef}
-            center={center}
-            zoom={12}
-            style={{ height: 520, width: "100%" }}
-            scrollWheelZoom
-          >
-            <TileLayer
-              attribution='&copy; OpenStreetMap contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
+          <div className="h-[70vh] min-h-[520px] w-full">
+            <MapContainer
+              ref={setMapRef}
+              center={center}
+              zoom={12}
+              style={{ height: "100%", width: "100%" }}
+              scrollWheelZoom
+            >
+              <TileLayer
+                attribution='&copy; OpenStreetMap contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
 
-            {/* Marqueur utilisateur */}
-            {me ? (
-              <>
-                <Marker position={[me.lat, me.lng]} icon={userIcon()}>
-                  <Popup autoPan>
-                    <div className="text-sm">
-                      <div className="font-semibold">Vous</div>
-                      <div className="text-xs text-gray-600">
-                        Position actuelle
+              {/* Me */}
+              {me ? (
+                <>
+                  <Marker position={[me.lat, me.lng]} icon={userIcon()}>
+                    <Popup autoPan>
+                      <div className="text-sm">
+                        <div className="font-semibold">Vous</div>
+                        <div className="text-xs text-gray-600">
+                          Position actuelle
+                        </div>
                       </div>
-                    </div>
-                  </Popup>
-                </Marker>
+                    </Popup>
+                  </Marker>
 
-                {/* Cercle rayon */}
-                {radiusKm > 0 ? (
-                  <Circle
-                    center={[me.lat, me.lng]}
-                    radius={radiusKm * 1000}
-                    pathOptions={{}}
-                  />
-                ) : null}
-              </>
-            ) : null}
+                  {radiusKm > 0 ? (
+                    <Circle
+                      center={[me.lat, me.lng]}
+                      radius={radiusKm * 1000}
+                      pathOptions={{}}
+                    />
+                  ) : null}
+                </>
+              ) : null}
 
-            {visibleRowsWithCoords.map((p) => (
-              <Marker
-                key={p.id}
-                position={[p.lat as number, p.lng as number]}
-                icon={carIcon()}
-                eventHandlers={{ click: () => setSelectedId(p.id) }}
-              >
-                {selectedId === p.id && (
+              {/* Parkings */}
+              {visibleRowsWithCoords.map((p) => (
+                <Marker
+                  key={p.id}
+                  position={[p.lat as number, p.lng as number]}
+                  icon={carIcon()}
+                  ref={(m) => {
+                    markerRefs.current[p.id] = m;
+                  }}
+                  eventHandlers={{
+                    click: () => selectParking(p),
+                  }}
+                >
                   <Popup autoPan>
                     <div className="text-sm">
                       <div className="font-semibold">{p.title}</div>
@@ -504,16 +544,16 @@ export default function MapClient() {
                         </div>
                       )}
                       <div className="mt-2">
-                        <a className="underline" href={`/parkings/${p.id}`}>
+                        <Link className="underline" href={`/parkings/${p.id}`}>
                           Voir la place →
-                        </a>
+                        </Link>
                       </div>
                     </div>
                   </Popup>
-                )}
-              </Marker>
-            ))}
-          </MapContainer>
+                </Marker>
+              ))}
+            </MapContainer>
+          </div>
         </section>
       </div>
     </main>

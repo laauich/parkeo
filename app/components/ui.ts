@@ -1,10 +1,12 @@
 export const UI = {
-  navLink: "text-sm underline underline-offset-4 hover:opacity-80",
+  navLink:
+    "text-sm px-3 py-2 rounded hover:bg-gray-300 transition inline-flex items-center gap-2",
   btnPrimary:
-    "inline-flex items-center justify-center rounded border px-4 py-2 text-sm font-medium hover:bg-gray-50 transition",
+    "border rounded px-4 py-2 text-sm font-medium bg-black text-white hover:opacity-90 transition",
   btnGhost:
-    "inline-flex items-center justify-center rounded border px-4 py-2 text-sm hover:bg-gray-50 transition",
-  chip:
-    "inline-flex items-center rounded border px-2 py-1 text-xs text-gray-700 bg-white",
-  card: "border rounded overflow-hidden",
+    "border rounded px-4 py-2 text-sm hover:bg-gray-200 transition",
+  btnDanger:
+    "border rounded px-4 py-2 text-sm bg-white text-red-700 border-red-200 hover:bg-red-50 transition",
+  chip: "text-xs border rounded px-2 py-1 text-gray-700 bg-white",
+  card: "border rounded p-4 bg-white",
 };
