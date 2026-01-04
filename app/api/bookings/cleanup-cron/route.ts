@@ -4,90 +4,97 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function env(name: string) {
-  const v = process.env[name];
-  return v && v.trim() ? v : "";
-}
-
-export async function GET() {
-  // GET = ping (pour debug)
-  return NextResponse.json(
-    {
-      ok: true,
-      route: "/api/bookings/cleanup-cron",
-      method: "GET",
-      hasCleanupSecret: !!env("CLEANUP_SECRET"),
-      hasServiceKey: !!env("SUPABASE_SERVICE_ROLE_KEY"),
-      hasSupabaseUrl: !!env("NEXT_PUBLIC_SUPABASE_URL"),
-    },
-    { status: 200 }
-  );
-}
-
-export async function POST(req: Request) {
+/**
+ * GET /api/bookings/cleanup-cron
+ * Sécurisé par header: x-cleanup-secret
+ */
+export async function GET(req: Request) {
   try {
-    const secret = env("CLEANUP_SECRET");
-    const got = req.headers.get("x-cleanup-secret") ?? "";
+    const cleanupSecret = process.env.CLEANUP_SECRET;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-    if (!secret) {
+    // 🔐 Vérifications ENV
+    if (!cleanupSecret || !serviceKey || !supabaseUrl) {
       return NextResponse.json(
-        { ok: false, where: "env", error: "CLEANUP_SECRET manquant" },
+        {
+          ok: false,
+          error: "ENV manquante",
+          hasCleanupSecret: !!cleanupSecret,
+          hasServiceKey: !!serviceKey,
+          hasSupabaseUrl: !!supabaseUrl,
+        },
         { status: 500 }
       );
     }
 
-    if (got !== secret) {
+    // 🔐 Sécurité : header secret
+    const headerSecret = req.headers.get("x-cleanup-secret");
+    if (headerSecret !== cleanupSecret) {
       return NextResponse.json(
-        { ok: false, where: "auth", error: "Unauthorized (secret)" },
+        { ok: false, error: "Unauthorized" },
         { status: 401 }
       );
     }
 
-    const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
-    const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
-
-    if (!supabaseUrl) {
-      return NextResponse.json(
-        { ok: false, where: "env", error: "NEXT_PUBLIC_SUPABASE_URL manquante" },
-        { status: 500 }
-      );
-    }
-    if (!serviceKey) {
-      return NextResponse.json(
-        { ok: false, where: "env", error: "SUPABASE_SERVICE_ROLE_KEY manquante" },
-        { status: 500 }
-      );
-    }
-
-    const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+    const supabase = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
 
-    // delete pending_payment + unpaid older than 20 minutes
-    const cutoff = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    // ⏱️ seuil : réservations non payées depuis +15 min
+    const expiredBefore = new Date(
+      Date.now() - 15 * 60 * 1000
+    ).toISOString();
 
-    const { data, error } = await supabaseAdmin
+    // 🔍 bookings à nettoyer
+    const { data: bookings, error: fetchError } = await supabase
       .from("bookings")
-      .delete()
-      .eq("status", "pending_payment")
+      .select("id")
       .eq("payment_status", "unpaid")
-      .lt("created_at", cutoff)
-      .select("id");
+      .eq("status", "pending_payment")
+      .lt("created_at", expiredBefore);
 
-    if (error) {
+    if (fetchError) {
       return NextResponse.json(
-        { ok: false, where: "supabase", error: error.message },
+        { ok: false, error: fetchError.message },
         { status: 500 }
       );
     }
 
-    return NextResponse.json(
-      { ok: true, deletedCount: (data ?? []).length, deletedIds: (data ?? []).map((r) => r.id) },
-      { status: 200, headers: { "Cache-Control": "no-store" } }
-    );
+    if (!bookings || bookings.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        cleaned: 0,
+        message: "Aucune réservation à nettoyer",
+      });
+    }
+
+    const ids = bookings.map((b) => b.id);
+
+    // 🧹 Suppression
+    const { error: deleteError } = await supabase
+      .from("bookings")
+      .delete()
+      .in("id", ids);
+
+    if (deleteError) {
+      return NextResponse.json(
+        { ok: false, error: deleteError.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      cleaned: ids.length,
+      ids,
+    });
   } catch (e: unknown) {
     return NextResponse.json(
-      { ok: false, where: "exception", error: e instanceof Error ? e.message : "Server error" },
+      {
+        ok: false,
+        error: e instanceof Error ? e.message : "Unknown error",
+      },
       { status: 500 }
     );
   }
