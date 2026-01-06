@@ -1,168 +1,306 @@
+// app/my-parkings/page.tsx
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 
-type MyParkingRow = {
+type ParkingRow = {
   id: string;
+  owner_id: string;
   title: string;
+  address: string;
   street: string | null;
   street_number: string | null;
   postal_code: string | null;
   city: string | null;
+
+  parking_type: "outdoor" | "indoor" | "garage" | null;
+  is_covered: boolean | null;
+  has_ev_charger: boolean | null;
+  is_secure: boolean | null;
+  is_lit: boolean | null;
+
   price_hour: number | null;
-  is_active: boolean | null;
+  price_day: number | null;
+
   photos: string[] | null;
+  is_active: boolean | null;
+
+  created_at: string;
 };
 
-function formatAddr(p: MyParkingRow) {
-  const a1 = p.street ? `${p.street}${p.street_number ? " " + p.street_number : ""}` : "";
-  const a2 = p.postal_code || p.city ? `${p.postal_code ?? ""} ${p.city ?? ""}`.trim() : "";
-  return [a1, a2].filter(Boolean).join(", ");
+function typeLabel(t: ParkingRow["parking_type"]) {
+  if (t === "indoor") return "Intérieur";
+  if (t === "garage") return "Garage";
+  return "Extérieur";
+}
+
+function safeFirstPhoto(p: ParkingRow) {
+  const u = p.photos?.[0];
+  return typeof u === "string" && u.trim().length > 0 ? u : null;
 }
 
 export default function MyParkingsPage() {
-  const { supabase, ready, session } = useAuth();
-  const [rows, setRows] = useState<MyParkingRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { ready, session, supabase } = useAuth();
+
+  const [rows, setRows] = useState<ParkingRow[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
-    setError(null);
-
-    if (!ready) return;
-    if (!session) {
-      setRows([]);
-      return;
-    }
+    if (!session) return;
 
     setLoading(true);
+    setError(null);
+
     const { data, error } = await supabase
       .from("parkings")
       .select(
-        "id,title,street,street_number,postal_code,city,price_hour,is_active,photos"
+        `
+        id,
+        owner_id,
+        title,
+        address,
+        street,
+        street_number,
+        postal_code,
+        city,
+        parking_type,
+        is_covered,
+        has_ev_charger,
+        is_secure,
+        is_lit,
+        price_hour,
+        price_day,
+        photos,
+        is_active,
+        created_at
+      `
       )
+      .eq("owner_id", session.user.id)
       .order("created_at", { ascending: false });
 
     if (error) {
       setError(error.message);
       setRows([]);
     } else {
-      setRows((data ?? []) as MyParkingRow[]);
+      setRows((data ?? []) as ParkingRow[]);
     }
+
     setLoading(false);
   };
 
+  // ✅ évite la règle ESLint “set-state-in-effect”
   useEffect(() => {
+    if (!ready || !session) return;
     queueMicrotask(() => void load());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, session?.user?.id]);
+  }, [ready, session]);
+
+  const activeCount = useMemo(
+    () => rows.filter((r) => r.is_active).length,
+    [rows]
+  );
 
   return (
-    <main className="max-w-5xl mx-auto p-6 space-y-4">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Mes places</h1>
-          <p className="text-sm text-gray-600">
-            Gérez vos places et consultez les réservations reçues.
-          </p>
-        </div>
+    <main className={`${UI.page}`}>
+      <div className={`${UI.container} ${UI.section} space-y-6`}>
+        {/* Header */}
+        <div className={UI.sectionTitleRow}>
+          <div className="space-y-1">
+            <h1 className={UI.h1}>Mes places</h1>
+            <p className={UI.p}>
+              Gérez vos annonces, modifiez les infos, et suivez les réservations.
+            </p>
 
-        <div className="flex gap-2">
-          <Link className={UI.btnGhost} href="/map">
-            Voir la carte
-          </Link>
-          <Link className={UI.btnPrimary} href="/parkings/new">
-            Créer une place
-          </Link>
-        </div>
-      </header>
-
-      {error && <p className="text-sm text-red-600">Erreur : {error}</p>}
-
-      {!session && ready && (
-        <section className="border rounded p-6">
-          <p className="text-sm text-gray-700">Connecte-toi pour voir tes places.</p>
-          <Link className="underline" href="/login">
-            Aller au login →
-          </Link>
-        </section>
-      )}
-
-      {session && (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-gray-600">
-              Session : <b>{session.user.email ?? "connecté"}</b>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <span className={UI.chip}>
+                {rows.length} place(s) · {activeCount} active(s)
+              </span>
+              <span className={UI.chip}>Style: violet premium</span>
             </div>
+          </div>
 
-            <button className={UI.btnGhost} onClick={load} disabled={loading}>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/parkings/new"
+              className={`${UI.btnBase} ${UI.btnPrimary}`}
+            >
+              + Proposer une place
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={!session || loading}
+              className={`${UI.btnBase} ${UI.btnGhost}`}
+              title={!session ? "Connecte-toi d’abord" : "Rafraîchir"}
+            >
               {loading ? "…" : "Rafraîchir"}
             </button>
           </div>
+        </div>
 
-          {rows.length === 0 && !loading && (
-            <p className="text-sm text-gray-600">
-              Aucune place.{" "}
-              <Link className="underline" href="/parkings/new">
-                Créer une place →
-              </Link>
+        {/* Auth states */}
+        {!ready ? (
+          <div className={`${UI.card} ${UI.cardPad}`}>
+            <p className={UI.p}>Chargement…</p>
+          </div>
+        ) : !session ? (
+          <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
+            <p className={UI.p}>
+              Tu dois être connecté pour voir tes places.
             </p>
-          )}
+            <div className="flex gap-2">
+              <Link
+                href="/login"
+                className={`${UI.btnBase} ${UI.btnPrimary}`}
+              >
+                Se connecter
+              </Link>
+              <Link href="/parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>
+                Parcourir les places
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Error */}
+            {error ? (
+              <div className={`${UI.card} ${UI.cardPad}`}>
+                <p className="text-sm text-rose-700">Erreur : {error}</p>
+              </div>
+            ) : null}
 
-          {rows.map((p) => {
-            const photo = p.photos?.[0] ?? null;
-            return (
-              <div key={p.id} className="border rounded overflow-hidden">
-                <div className="flex">
-                  <div className="w-36 h-24 bg-gray-100 shrink-0">
-                    {photo ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={photo} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-xs text-gray-500">
-                        —
+            {/* Grid */}
+            {rows.length > 0 ? (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {rows.map((p) => {
+                  const photo = safeFirstPhoto(p);
+
+                  return (
+                    <div
+                      key={p.id}
+                      className={`${UI.card} ${UI.cardHover} overflow-hidden`}
+                    >
+                      {/* cover */}
+                      <div className="h-40 bg-slate-100">
+                        {photo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={photo}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="h-full w-full flex items-center justify-center text-xs text-slate-500">
+                            Aucune photo
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
 
-                  <div className="p-4 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-medium">{p.title}</div>
-                        <div className="text-xs text-gray-600 mt-1">
-                          {formatAddr(p) || "Adresse non renseignée"}
+                      <div className={`${UI.cardPad} space-y-3`}>
+                        {/* title + status */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold text-slate-900 truncate">
+                              {p.title}
+                            </div>
+                            <div className="text-xs text-slate-500 truncate">
+                              {p.address}
+                            </div>
+                          </div>
+
+                          <span
+                            className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${
+                              p.is_active
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-slate-50 text-slate-600 border border-slate-200"
+                            }`}
+                            title={p.is_active ? "Active" : "Inactive"}
+                          >
+                            {p.is_active ? "Active" : "Inactive"}
+                          </span>
                         </div>
-                        <div className="text-xs text-gray-600 mt-1">
-                          {p.price_hour !== null ? `${p.price_hour} CHF/h` : "Prix non renseigné"}
-                          {" · "}
-                          {p.is_active ? "Active" : "Inactive"}
+
+                        {/* chips */}
+                        <div className="flex flex-wrap gap-2">
+                          <span className={UI.chip}>{typeLabel(p.parking_type)}</span>
+                          <span className={UI.chip}>
+                            {p.is_covered ? "Couverte" : "Non couverte"}
+                          </span>
+                          {p.has_ev_charger ? <span className={UI.chip}>⚡ EV</span> : null}
+                          {p.is_secure ? <span className={UI.chip}>🔒 Sécurisé</span> : null}
+                          {p.is_lit ? <span className={UI.chip}>💡 Éclairé</span> : null}
                         </div>
-                      </div>
 
-                      <div className="flex flex-wrap gap-2">
-                        <Link className={UI.btnGhost} href={`/my-parkings/${p.id}/edit`}>
-                          Modifier
-                        </Link>
+                        {/* price */}
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-slate-600">Prix</span>
+                          <span className="font-semibold text-slate-900">
+                            {p.price_hour !== null ? `${p.price_hour} CHF/h` : "—"}
+                            {p.price_day ? ` · ${p.price_day} CHF/j` : ""}
+                          </span>
+                        </div>
 
-                        <Link className={UI.btnGhost} href={`/my-parkings/${p.id}/bookings`}>
-                          Réservations
-                        </Link>
+                        <div className={UI.divider} />
 
-                        <Link className={UI.btnGhost} href={`/parkings/${p.id}`}>
-                          Voir
-                        </Link>
+                        {/* actions */}
+                        <div className="grid grid-cols-3 gap-2">
+                          <Link
+                            href={`/parkings/${p.id}`}
+                            className={`${UI.btnBase} ${UI.btnGhost} w-full`}
+                          >
+                            Ouvrir
+                          </Link>
+
+                          <Link
+                            href={`/my-parkings/${p.id}/edit`}
+                            className={`${UI.btnBase} ${UI.btnPrimary} w-full`}
+                          >
+                            Modifier
+                          </Link>
+
+                          <Link
+                            href={`/my-parkings/${p.id}/bookings`}
+                            className={`${UI.btnBase} ${UI.btnGhost} w-full`}
+                          >
+                            Réservations
+                          </Link>
+                        </div>
+
+                        <p className={UI.subtle}>
+                          ID: <span className="font-mono">{p.id}</span>
+                        </p>
                       </div>
                     </div>
-                  </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
+                <h2 className={UI.h2}>Aucune place pour le moment</h2>
+                <p className={UI.p}>
+                  Crée ta première annonce (photos + carte + options).
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href="/parkings/new"
+                    className={`${UI.btnBase} ${UI.btnPrimary}`}
+                  >
+                    + Proposer une place
+                  </Link>
+                  <Link href="/map" className={`${UI.btnBase} ${UI.btnGhost}`}>
+                    Voir la carte
+                  </Link>
                 </div>
               </div>
-            );
-          })}
-        </section>
-      )}
+            )}
+          </>
+        )}
+      </div>
     </main>
   );
 }

@@ -36,9 +36,11 @@ function guessPartsFromDisplayName(displayName: string) {
   const streetNumber = m ? m[2].trim() : "";
 
   // Try extract postal + city from second or third
-  const pcCity = (second.match(/^(\d{4,5})\s+(.*)$/) ? second : third.match(/^(\d{4,5})\s+(.*)$/) ? third : null) as
-    | RegExpMatchArray
-    | null;
+  const pcCity = (second.match(/^(\d{4,5})\s+(.*)$/)
+    ? second
+    : third.match(/^(\d{4,5})\s+(.*)$/)
+    ? third
+    : null) as RegExpMatchArray | null;
 
   const postalCode = pcCity?.[1] ?? "";
   const city = pcCity?.[2] ?? "";
@@ -182,258 +184,369 @@ export default function NewParkingClient() {
     router.refresh();
   };
 
+  // ===== UI states =====
   if (!ready) {
     return (
-      <main className="max-w-3xl mx-auto p-6">
-        <p className="text-sm text-gray-600">Chargement…</p>
+      <main className={UI.page}>
+        <div className={`${UI.container} ${UI.section}`}>
+          <div className={`${UI.card} ${UI.cardPad}`}>
+            <p className={UI.p}>Chargement…</p>
+          </div>
+        </div>
       </main>
     );
   }
 
   if (!session) {
     return (
-      <main className="max-w-3xl mx-auto p-6 space-y-3">
-        <h1 className="text-2xl font-semibold">Proposer une place</h1>
-        <p className="text-sm text-gray-600">Tu dois être connecté.</p>
-        <Link className="underline" href="/login">
-          Se connecter
-        </Link>
+      <main className={UI.page}>
+        <div className={`${UI.container} ${UI.section} space-y-6`}>
+          <div className={UI.sectionTitleRow}>
+            <div>
+              <h1 className={UI.h1}>Proposer une place</h1>
+              <p className={UI.p}>Tu dois être connecté pour continuer.</p>
+            </div>
+            <Link href="/parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>
+              ← Retour
+            </Link>
+          </div>
+
+          <div className={`${UI.card} ${UI.cardPad} space-y-4`}>
+            <p className={UI.p}>Connecte-toi pour proposer une place.</p>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/login" className={`${UI.btnBase} ${UI.btnPrimary}`}>
+                Se connecter
+              </Link>
+              <Link href="/parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>
+                Voir les places
+              </Link>
+            </div>
+          </div>
+        </div>
       </main>
     );
   }
 
+  // ===== Main form =====
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Proposer une place</h1>
-        <Link className={UI.btnGhost} href="/parkings">
-          Retour
-        </Link>
-      </div>
-
-      {error && <p className="text-sm text-red-600">Erreur : {error}</p>}
-
-      <form onSubmit={onCreate} className="space-y-6">
-        <section className="border rounded p-4 space-y-4">
-          <h2 className="font-semibold">Infos</h2>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Titre</label>
-            <input
-              className="border rounded px-3 py-2 w-full"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Ex: Place couverte proche Plainpalais"
-            />
+    <main className={UI.page}>
+      <div className={`${UI.container} ${UI.section} space-y-6`}>
+        <header className={UI.sectionTitleRow}>
+          <div>
+            <h1 className={UI.h1}>Proposer une place</h1>
+            <p className={UI.p}>
+              Une fiche complète (adresse, photos, équipements) augmente les réservations.
+            </p>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Instructions</label>
-            <textarea
-              className="border rounded px-3 py-2 w-full"
-              rows={3}
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              placeholder="Ex: accès via badge, code portail, étage -1…"
-            />
+          <div className="flex flex-wrap gap-2">
+            <Link href="/my-parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>
+              Mes places
+            </Link>
+            <Link href="/parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>
+              Parkings
+            </Link>
           </div>
-        </section>
+        </header>
 
-        <section className="border rounded p-4 space-y-4">
-          <h2 className="font-semibold">Adresse</h2>
+        {error ? (
+          <div className={`${UI.card} ${UI.cardPad} border-rose-200 bg-rose-50/60`}>
+            <p className="text-sm text-rose-700">
+              <b>Erreur :</b> {error}
+            </p>
+          </div>
+        ) : null}
 
-          {/* ✅ Recherche auto */}
-          <AddressSearch
-            query={addressSearch}
-            onQueryChange={setAddressSearch}
-            onPick={(p) => {
-              setPos({ lat: p.lat, lng: p.lng });
-
-              // best-effort : remplir champs adresse
-              const guessed = guessPartsFromDisplayName(p.displayName);
-              if (guessed.street) setStreet(guessed.street);
-              if (guessed.streetNumber) setStreetNumber(guessed.streetNumber);
-              if (guessed.postalCode) setPostalCode(guessed.postalCode);
-              if (guessed.city) setCity(guessed.city);
-            }}
-            placeholder="Ex: Rue du Rhône 12, Genève"
-          />
-
-          {/* Champs manuels (toujours dispo) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-            <div className="md:col-span-2 space-y-2">
-              <label className="text-sm font-medium">Rue</label>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                value={street}
-                onChange={(e) => setStreet(e.target.value)}
-                placeholder="Ex: Rue du Rhône"
-              />
+        <form onSubmit={onCreate} className="space-y-6">
+          {/* ===== Infos ===== */}
+          <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className={UI.h2}>Infos</h2>
+              <span className={UI.chip}>Étape 1/5</span>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">N°</label>
+              <label className="text-sm font-medium text-slate-900">Titre</label>
               <input
-                className="border rounded px-3 py-2 w-full"
-                value={streetNumber}
-                onChange={(e) => setStreetNumber(e.target.value)}
-                placeholder="Ex: 12"
+                className={UI.input}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Ex: Place couverte proche Plainpalais"
               />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Code postal</label>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                value={postalCode}
-                onChange={(e) => setPostalCode(e.target.value)}
-                placeholder="Ex: 1204"
-              />
-            </div>
-
-            <div className="md:col-span-2 space-y-2">
-              <label className="text-sm font-medium">Ville</label>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                placeholder="Ex: Genève"
-              />
-            </div>
-          </div>
-
-          <div className="text-xs text-gray-600">
-            Address (auto) : <b>{previewAddress || "—"}</b>
-          </div>
-        </section>
-
-        <section className="border rounded p-4 space-y-4">
-          <h2 className="font-semibold">Caractéristiques</h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Type</label>
-              <select
-                className="border rounded px-3 py-2 w-full"
-                value={parkingType}
-                onChange={(e) => setParkingType(e.target.value as ParkingType)}
-              >
-                <option value="outdoor">Extérieur</option>
-                <option value="indoor">Intérieur</option>
-                <option value="garage">Garage</option>
-              </select>
+              <p className={UI.subtle}>Astuce : précise un repère (gare, quartier…).</p>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">Couvert</label>
-              <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-slate-900">Instructions</label>
+              <textarea
+                className={`${UI.input} min-h-[110px]`}
+                rows={3}
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                placeholder="Ex: accès via badge, code portail, étage -1…"
+              />
+            </div>
+          </section>
+
+          {/* ===== Adresse ===== */}
+          <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className={UI.h2}>Adresse</h2>
+              <span className={UI.chip}>Étape 2/5</span>
+            </div>
+
+            {/* Recherche */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-900">Recherche rapide</label>
+              <AddressSearch
+                query={addressSearch}
+                onQueryChange={setAddressSearch}
+                onPick={(p) => {
+                  setPos({ lat: p.lat, lng: p.lng });
+
+                  const guessed = guessPartsFromDisplayName(p.displayName);
+                  if (guessed.street) setStreet(guessed.street);
+                  if (guessed.streetNumber) setStreetNumber(guessed.streetNumber);
+                  if (guessed.postalCode) setPostalCode(guessed.postalCode);
+                  if (guessed.city) setCity(guessed.city);
+                }}
+                placeholder="Ex: Rue du Rhône 12, Genève"
+              />
+              <p className={UI.subtle}>
+                Sélectionne une adresse pour positionner automatiquement la carte.
+              </p>
+            </div>
+
+            <div className={UI.divider} />
+
+            {/* Champs manuels */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2 space-y-2">
+                <label className="text-sm font-medium text-slate-900">Rue</label>
                 <input
-                  type="checkbox"
-                  checked={isCovered}
-                  onChange={(e) => setIsCovered(e.target.checked)}
+                  className={UI.input}
+                  value={street}
+                  onChange={(e) => setStreet(e.target.value)}
+                  placeholder="Ex: Rue du Rhône"
                 />
-                <span className="text-sm text-gray-700">
-                  {isCovered ? "Oui" : "Non"}
-                </span>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-900">N°</label>
+                <input
+                  className={UI.input}
+                  value={streetNumber}
+                  onChange={(e) => setStreetNumber(e.target.value)}
+                  placeholder="Ex: 12"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-900">Code postal</label>
+                <input
+                  className={UI.input}
+                  value={postalCode}
+                  onChange={(e) => setPostalCode(e.target.value)}
+                  placeholder="Ex: 1204"
+                />
+              </div>
+
+              <div className="md:col-span-2 space-y-2">
+                <label className="text-sm font-medium text-slate-900">Ville</label>
+                <input
+                  className={UI.input}
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  placeholder="Ex: Genève"
+                />
               </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={hasEvCharger}
-                onChange={(e) => setHasEvCharger(e.target.checked)}
-              />
-              ⚡ Borne EV
-            </label>
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className={UI.chip}>Adresse : {previewAddress || "—"}</span>
+              {pos ? (
+                <span className={UI.chip}>
+                  📍 {pos.lat.toFixed(5)}, {pos.lng.toFixed(5)}
+                </span>
+              ) : (
+                <span className={UI.chip}>📍 Position : —</span>
+              )}
+            </div>
+          </section>
 
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={isSecure}
-                onChange={(e) => setIsSecure(e.target.checked)}
-              />
-              🔒 Sécurisé
-            </label>
-
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={isLit}
-                onChange={(e) => setIsLit(e.target.checked)}
-              />
-              💡 Éclairé
-            </label>
-          </div>
-        </section>
-
-        <section className="border rounded p-4 space-y-4">
-          <h2 className="font-semibold">Prix</h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Prix / heure (CHF)</label>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                value={priceHour}
-                onChange={(e) => setPriceHour(e.target.value)}
-                placeholder="Ex: 5"
-                inputMode="decimal"
-              />
+          {/* ===== Caractéristiques ===== */}
+          <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className={UI.h2}>Caractéristiques</h2>
+              <span className={UI.chip}>Étape 3/5</span>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Prix / jour (CHF)</label>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                value={priceDay}
-                onChange={(e) => setPriceDay(e.target.value)}
-                placeholder="Ex: 25 (optionnel)"
-                inputMode="decimal"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-900">Type</label>
+                <select
+                  className={UI.select}
+                  value={parkingType}
+                  onChange={(e) => setParkingType(e.target.value as ParkingType)}
+                >
+                  <option value="outdoor">Extérieur</option>
+                  <option value="indoor">Intérieur</option>
+                  <option value="garage">Garage</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-900">Couvert</label>
+                <button
+                  type="button"
+                  onClick={() => setIsCovered((v) => !v)}
+                  className={`${UI.btnBase} ${UI.btnGhost} w-full justify-between`}
+                >
+                  <span>{isCovered ? "✅ Oui" : "❌ Non"}</span>
+                  <span className={UI.subtle}>Clique pour changer</span>
+                </button>
+              </div>
             </div>
+
+            <div className="flex flex-wrap gap-2">
+              <label className={UI.chip}>
+                <input
+                  type="checkbox"
+                  className="mr-2"
+                  checked={hasEvCharger}
+                  onChange={(e) => setHasEvCharger(e.target.checked)}
+                />
+                ⚡ Borne EV
+              </label>
+
+              <label className={UI.chip}>
+                <input
+                  type="checkbox"
+                  className="mr-2"
+                  checked={isSecure}
+                  onChange={(e) => setIsSecure(e.target.checked)}
+                />
+                🔒 Sécurisé
+              </label>
+
+              <label className={UI.chip}>
+                <input
+                  type="checkbox"
+                  className="mr-2"
+                  checked={isLit}
+                  onChange={(e) => setIsLit(e.target.checked)}
+                />
+                💡 Éclairé
+              </label>
+            </div>
+          </section>
+
+          {/* ===== Prix ===== */}
+          <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className={UI.h2}>Prix</h2>
+              <span className={UI.chip}>Étape 4/5</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-900">
+                  Prix / heure (CHF)
+                </label>
+                <input
+                  className={UI.input}
+                  value={priceHour}
+                  onChange={(e) => setPriceHour(e.target.value)}
+                  placeholder="Ex: 5"
+                  inputMode="decimal"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-900">
+                  Prix / jour (CHF)
+                </label>
+                <input
+                  className={UI.input}
+                  value={priceDay}
+                  onChange={(e) => setPriceDay(e.target.value)}
+                  placeholder="Ex: 25 (optionnel)"
+                  inputMode="decimal"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {priceHour.trim() ? <span className={UI.chip}>⏱ {priceHour} CHF/h</span> : null}
+              {priceDay.trim() ? <span className={UI.chip}>📅 {priceDay} CHF/j</span> : null}
+            </div>
+          </section>
+
+          {/* ===== Photos + Carte ===== */}
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className={`${UI.card} ${UI.cardPad} space-y-4`}>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className={UI.h2}>Photos</h2>
+                <span className={UI.chip}>Étape 5/5</span>
+              </div>
+
+              <PhotoUploader
+                parkingId={tempId}
+                value={photos}
+                onChange={setPhotos}
+                maxPhotos={3}
+              />
+
+              <p className={UI.subtle}>
+                Conseil : 1 à 3 photos nettes (entrée, place, accès).
+              </p>
+            </div>
+
+            <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
+              <div>
+                <h2 className={UI.h2}>Carte</h2>
+                <p className={UI.p}>
+                  Sélectionne l’emplacement (auto si tu choisis une adresse).
+                </p>
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-slate-200/70">
+                <div className="h-[360px]">
+                  <MapPicker value={pos} onChange={setPos} />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <span className={UI.chip}>lat: {pos?.lat ?? "—"}</span>
+                <span className={UI.chip}>lng: {pos?.lng ?? "—"}</span>
+              </div>
+            </div>
+          </section>
+
+          {/* ===== Actions ===== */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className={`${UI.btnBase} ${UI.btnPrimary}`}
+              disabled={saving}
+              type="submit"
+            >
+              {saving ? "Création…" : "Créer la place"}
+            </button>
+
+            <Link className={`${UI.btnBase} ${UI.btnGhost}`} href="/my-parkings">
+              Mes places
+            </Link>
+
+            <button
+              type="button"
+              className={`${UI.btnBase} ${UI.btnGhost}`}
+              onClick={() => router.back()}
+            >
+              Retour
+            </button>
           </div>
-        </section>
-
-        <section className="border rounded p-4 space-y-4">
-          <h2 className="font-semibold">Photos</h2>
-          <PhotoUploader
-            parkingId={tempId}
-            value={photos}
-            onChange={setPhotos}
-            maxPhotos={3}
-          />
-        </section>
-
-        <section className="border rounded p-4 space-y-4">
-          <h2 className="font-semibold">Carte</h2>
-          <p className="text-sm text-gray-600">
-            Sélectionne l’emplacement (auto si tu choisis une adresse).
-          </p>
-
-          <div className="border rounded overflow-hidden">
-            <MapPicker value={pos} onChange={setPos} />
-          </div>
-
-          <div className="text-xs text-gray-500">
-            lat: {pos?.lat ?? "—"} / lng: {pos?.lng ?? "—"}
-          </div>
-        </section>
-
-        <div className="flex items-center gap-3">
-          <button className={UI.btnPrimary} disabled={saving} type="submit">
-            {saving ? "Création…" : "Créer la place"}
-          </button>
-
-          <Link className={UI.btnGhost} href="/my-parkings">
-            Mes places
-          </Link>
-        </div>
-      </form>
+        </form>
+      </div>
     </main>
   );
 }

@@ -1,10 +1,17 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { MapContainer, TileLayer, Marker, Popup, Circle } from "react-leaflet";
-import L, { Map as LeafletMap, Marker as LeafletMarker } from "leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Circle,
+  useMap,
+} from "react-leaflet";
+import L, { Map as LeafletMap } from "leaflet";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { UI } from "@/app/components/ui";
 
@@ -80,14 +87,15 @@ function distanceMeters(
 function carIcon() {
   const html = `
 <div style="
-  width:36px;
-  height:36px;
-  border-radius:50%;
+  width:34px;
+  height:34px;
+  border-radius:999px;
   background:#111;
   display:flex;
   align-items:center;
   justify-content:center;
-  box-shadow:0 2px 6px rgba(0,0,0,.3);
+  box-shadow:0 3px 10px rgba(0,0,0,.28);
+  border:2px solid #fff;
 ">
   <svg xmlns="http://www.w3.org/2000/svg"
     width="18" height="18" viewBox="0 0 24 24"
@@ -103,23 +111,23 @@ function carIcon() {
   return L.divIcon({
     className: "parkeo-car-marker",
     html,
-    iconSize: [36, 36],
-    iconAnchor: [18, 18],
-    popupAnchor: [0, -18],
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -16],
   });
 }
 
 function userIcon() {
   const html = `
 <div style="
-  width:34px;
-  height:34px;
-  border-radius:50%;
-  background:#2563eb;
+  width:32px;
+  height:32px;
+  border-radius:999px;
+  background:#7c3aed;
   display:flex;
   align-items:center;
   justify-content:center;
-  box-shadow:0 2px 8px rgba(0,0,0,.25);
+  box-shadow:0 3px 12px rgba(0,0,0,.25);
   border:2px solid #fff;
 ">
   <svg xmlns="http://www.w3.org/2000/svg"
@@ -134,10 +142,21 @@ function userIcon() {
   return L.divIcon({
     className: "parkeo-user-marker",
     html,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
     popupAnchor: [0, -16],
   });
+}
+
+/* =========================
+   Map ref setter (reliable)
+========================= */
+function MapRefSetter({ onMap }: { onMap: (m: LeafletMap) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    onMap(map);
+  }, [map, onMap]);
+  return null;
 }
 
 /* =========================
@@ -146,15 +165,14 @@ function userIcon() {
 export default function MapClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
 
-  // Leaflet map ref
+  // Leaflet map ref (reliable via MapRefSetter)
   const mapRef = useRef<LeafletMap | null>(null);
-
-  // Markers refs by id (to open popup immediately)
-  const markerRefs = useRef<Record<string, LeafletMarker | null>>({});
-
-  const setMapRef = (m: LeafletMap | null) => {
+  const handleMap = useCallback((m: LeafletMap) => {
     mapRef.current = m;
-  };
+  }, []);
+
+  // Popup control per marker
+  const markerRefs = useRef<Record<string, L.Marker | null>>({});
 
   const [rows, setRows] = useState<Parking[]>([]);
   const [loading, setLoading] = useState(false);
@@ -166,9 +184,10 @@ export default function MapClient() {
   const [me, setMe] = useState<{ lat: number; lng: number } | null>(null);
   const [geoStatus, setGeoStatus] = useState<string>("");
 
-  // radius (km). 0 = all
+  // radius km (0 = all)
   const [radiusKm, setRadiusKm] = useState<number>(2);
 
+  // Geneva center default
   const center: [number, number] = [46.2044, 6.1432];
 
   const visibleRows = useMemo(() => {
@@ -227,66 +246,45 @@ export default function MapClient() {
     }
 
     setLoading(false);
-
-    // After data loads, Leaflet sometimes needs a resize recalculation
-    queueMicrotask(() => {
-      mapRef.current?.invalidateSize();
-    });
   };
 
-  // initial load
   useEffect(() => {
     queueMicrotask(() => void load());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fix sizing on resize
-  useEffect(() => {
-    const onResize = () => mapRef.current?.invalidateSize();
-    window.addEventListener("resize", onResize);
+  // ✅ Select helper: recentre + zoom + popup (works for LIST click too)
+  const focusParking = useCallback(
+    (id: string) => {
+      setSelectedId(id);
 
-    // also invalidate shortly after mount (grid/layout settle)
-    const t1 = window.setTimeout(() => mapRef.current?.invalidateSize(), 150);
-    const t2 = window.setTimeout(() => mapRef.current?.invalidateSize(), 600);
+      // find coords (only if marker exists)
+      const p = visibleRowsWithCoords.find((x) => x.id === id) ?? null;
 
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-    };
-  }, []);
+      // open popup first (you said this works and you want it)
+      const mk = markerRefs.current[id];
+      if (mk) mk.openPopup();
 
-  // ✅ Single selection handler: list OR marker
-  const selectParking = (p: Parking) => {
-    setSelectedId(p.id);
+      // then recenter+zoom (ensure map size is correct)
+      const map = mapRef.current;
+      if (!map || !p) return;
 
-    if (mapRef.current && typeof p.lat === "number" && typeof p.lng === "number") {
-      const targetZoom = 16;
-
-      // Stronger, clearer move than setView
-      mapRef.current.flyTo([p.lat, p.lng], targetZoom, {
-        animate: true,
-        duration: 0.6,
+      requestAnimationFrame(() => {
+        try {
+          map.invalidateSize();
+          map.setView([p.lat as number, p.lng as number], 15, { animate: true });
+        } catch {
+          // ignore
+        }
       });
-
-      // After selection, open popup and slightly pan up so it's well centered
-      window.setTimeout(() => {
-        mapRef.current?.invalidateSize();
-
-        // Offset so marker+popup are nicely visible (upwards)
-        // Negative y pans up
-        mapRef.current?.panBy([0, -120], { animate: true });
-
-        const marker = markerRefs.current[p.id];
-        marker?.openPopup();
-      }, 250);
-    }
-  };
+    },
+    [visibleRowsWithCoords]
+  );
 
   const locateMe = () => {
     setGeoStatus("");
     if (!("geolocation" in navigator)) {
-      setGeoStatus("Géolocalisation non supportée sur ce navigateur.");
+      setGeoStatus("Géolocalisation non supportée.");
       return;
     }
 
@@ -299,9 +297,12 @@ export default function MapClient() {
         setMe({ lat, lng });
         setGeoStatus("Position détectée ✅");
 
-        if (mapRef.current) {
-          mapRef.current.flyTo([lat, lng], 14, { animate: true, duration: 0.7 });
-          window.setTimeout(() => mapRef.current?.invalidateSize(), 200);
+        const map = mapRef.current;
+        if (map) {
+          requestAnimationFrame(() => {
+            map.invalidateSize();
+            map.setView([lat, lng], 14, { animate: true });
+          });
         }
       },
       (err) => {
@@ -318,243 +319,239 @@ export default function MapClient() {
     setMe(null);
     setGeoStatus("");
     setRadiusKm(2);
-    setSelectedId(null);
-    if (mapRef.current) mapRef.current.flyTo(center, 12, { animate: true, duration: 0.6 });
-    window.setTimeout(() => mapRef.current?.invalidateSize(), 200);
+
+    const map = mapRef.current;
+    if (map) {
+      requestAnimationFrame(() => {
+        map.invalidateSize();
+        map.setView(center, 12, { animate: true });
+      });
+    }
   };
 
+  // UI cosmetics (no logic changes elsewhere)
+  const btnPrimary = `${UI.btnBase} ${UI.btnPrimary}`;
+  const btnGhost = `${UI.btnBase} ${UI.btnGhost}`;
+
   return (
-    <main className="max-w-6xl mx-auto p-6 space-y-4">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Carte des parkings</h1>
-          <p className="text-sm text-gray-600">
-            Un clic sur une place (liste ou voiture) → recentre + zoom + affiche détails
-          </p>
-          {geoStatus ? (
-            <p className="text-xs text-gray-500 mt-1">{geoStatus}</p>
-          ) : null}
-        </div>
-
-        <div className="flex gap-2">
-          <Link href="/parkings" className={UI.btnGhost}>
-            Vue liste
-          </Link>
-          <Link href="/parkings/new" className={UI.btnPrimary}>
-            Proposer ma place
-          </Link>
-        </div>
-      </header>
-
-      {/* Autour de moi */}
-      <section className="border rounded p-4 flex flex-wrap items-center gap-3">
-        <button type="button" className={UI.btnPrimary} onClick={locateMe}>
-          📍 Autour de moi
-        </button>
-
-        <button type="button" className={UI.btnGhost} onClick={clearMe}>
-          Réinitialiser
-        </button>
-
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-gray-600">Rayon :</span>
-          <select
-            className="border rounded px-3 py-2 text-sm"
-            value={radiusKm}
-            onChange={(e) => setRadiusKm(Number(e.target.value))}
-            disabled={!me}
-            title={!me ? "Active “Autour de moi” d’abord" : ""}
-          >
-            <option value={0}>Tout</option>
-            <option value={1}>1 km</option>
-            <option value={2}>2 km</option>
-            <option value={5}>5 km</option>
-            <option value={10}>10 km</option>
-          </select>
-
-          <span className="text-xs text-gray-500">
-            {me
-              ? `${visibleRowsWithCoords.length} place(s) sur la carte`
-              : "Active le GPS pour filtrer"}
-          </span>
-        </div>
-      </section>
-
-      {error && <p className="text-sm text-red-600">Erreur : {error}</p>}
-
-      {/* ✅ layout + height stable */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        {/* LISTE */}
-        <section className="border rounded p-4 overflow-auto" style={{ maxHeight: "75vh" }}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-medium text-sm">
-              Places disponibles{" "}
-              <span className="text-xs text-gray-500">({visibleRows.length})</span>
-            </div>
-
-            <button className={UI.btnGhost} onClick={load} disabled={loading}>
-              {loading ? "…" : "Rafraîchir"}
-            </button>
+    <main className={UI.page}>
+      <div className={`${UI.container} ${UI.section} space-y-4`}>
+        <header className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h1 className={UI.h2}>Carte des parkings</h1>
+            <p className={UI.p}>1 clic = recentre + zoom + popup</p>
+            {geoStatus ? <p className={UI.subtle}>{geoStatus}</p> : null}
           </div>
 
-          <div className="space-y-3">
-            {visibleRows.map((p) => {
-              const photo = p.photos?.[0] ?? null;
-              const active = selectedId === p.id;
+          <div className="flex gap-2">
+            <Link href="/parkings" className={btnGhost}>
+              Vue liste
+            </Link>
+          </div>
+        </header>
 
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => selectParking(p)}
-                  className={`w-full text-left border rounded overflow-hidden transition ${
-                    active ? "ring-2 ring-black" : "hover:bg-gray-50"
-                  }`}
-                >
-                  <div className="flex">
-                    <div className="w-28 h-20 bg-gray-100 shrink-0">
-                      {photo ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={photo}
-                          alt=""
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-xs text-gray-500">
-                          —
-                        </div>
-                      )}
-                    </div>
+        {/* Autour de moi */}
+        <section className={`${UI.card} ${UI.cardPad} flex flex-wrap items-center gap-3`}>
+          <button type="button" className={btnPrimary} onClick={locateMe}>
+            📍 Autour de moi
+          </button>
 
-                    <div className="p-3 flex-1">
-                      <div className="flex justify-between gap-3">
-                        <div className="font-medium">{p.title}</div>
-                        {p.price_hour !== null && (
-                          <div className="text-sm whitespace-nowrap">
-                            {p.price_hour} CHF/h
+          <button type="button" className={btnGhost} onClick={clearMe}>
+            Réinitialiser
+          </button>
+
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-slate-600">Rayon :</span>
+            <select
+              className={UI.select + " w-auto min-w-[140px]"}
+              value={radiusKm}
+              onChange={(e) => setRadiusKm(Number(e.target.value))}
+              disabled={!me}
+              title={!me ? "Active “Autour de moi” d’abord" : ""}
+            >
+              <option value={0}>Tout</option>
+              <option value={1}>1 km</option>
+              <option value={2}>2 km</option>
+              <option value={5}>5 km</option>
+              <option value={10}>10 km</option>
+            </select>
+
+            <span className={UI.subtle}>
+              {me
+                ? `${visibleRowsWithCoords.length} place(s) sur la carte`
+                : "Active le GPS pour filtrer"}
+            </span>
+          </div>
+        </section>
+
+        {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
+
+        {/* Layout: list left, map right */}
+        <div className="grid lg:grid-cols-2 gap-4" style={{ height: 620 }}>
+          {/* LIST */}
+          <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-medium text-sm text-slate-900">
+                Places disponibles{" "}
+                <span className={UI.subtle}>({visibleRows.length})</span>
+              </div>
+
+              <button className={btnGhost} onClick={load} disabled={loading}>
+                {loading ? "…" : "Rafraîchir"}
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {visibleRows.map((p) => {
+                const photo = p.photos?.[0] ?? null;
+                const active = selectedId === p.id;
+
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => focusParking(p.id)} // ✅ LIST click => focus
+                    className={`w-full text-left ${UI.card} ${UI.cardHover} overflow-hidden ${
+                      active ? "ring-2 ring-violet-400" : ""
+                    }`}
+                  >
+                    <div className="flex">
+                      <div className="w-28 h-20 bg-slate-100 shrink-0">
+                        {photo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={photo}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                            —
                           </div>
                         )}
                       </div>
 
-                      <div className="text-xs text-gray-600 mt-1">
-                        {formatAddress(p) || "Adresse non renseignée"}
-                      </div>
+                      <div className="p-4 flex-1">
+                        <div className="flex justify-between gap-3">
+                          <div className="font-medium text-slate-900">
+                            {p.title}
+                          </div>
+                          {p.price_hour !== null && (
+                            <div className="text-sm whitespace-nowrap font-semibold text-violet-700">
+                              {p.price_hour} CHF/h
+                            </div>
+                          )}
+                        </div>
 
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                        <span className={UI.chip}>
-                          {p.parking_type === "indoor"
-                            ? "Intérieur"
-                            : p.parking_type === "garage"
-                            ? "Garage"
-                            : "Extérieur"}
-                        </span>
-                        <span className={UI.chip}>
-                          {p.is_covered ? "Couverte" : "Non couverte"}
-                        </span>
-                        {p.has_ev_charger && <span className={UI.chip}>⚡ EV</span>}
-                        {p.is_secure && <span className={UI.chip}>🔒</span>}
-                        {p.is_lit && <span className={UI.chip}>💡</span>}
-                      </div>
+                        <div className="text-xs text-slate-600 mt-1">
+                          {formatAddress(p) || "Adresse non renseignée"}
+                        </div>
 
-                      <div className="mt-2">
-                        <Link
-                          href={`/parkings/${p.id}`}
-                          className="underline text-xs"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Voir la place →
-                        </Link>
+                        <div className="mt-2">
+                          <Link
+                            href={`/parkings/${p.id}`}
+                            className={UI.link + " text-xs"}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            Voir la place →
+                          </Link>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </button>
-              );
-            })}
+                  </button>
+                );
+              })}
 
-            {!loading && visibleRows.length === 0 && (
-              <p className="text-sm text-gray-600">
-                Aucune place trouvée pour ce rayon.
-              </p>
-            )}
-          </div>
-        </section>
+              {!loading && visibleRows.length === 0 && (
+                <p className="text-sm text-slate-600">
+                  Aucune place trouvée pour ce rayon.
+                </p>
+              )}
+            </div>
+          </section>
 
-        {/* MAP (hauteur responsive + 100% inside) */}
-        <section className="border rounded overflow-hidden">
-          <div className="h-[70vh] min-h-[520px] w-full">
-            <MapContainer
-              ref={setMapRef}
-              center={center}
-              zoom={12}
-              style={{ height: "100%", width: "100%" }}
-              scrollWheelZoom
-            >
-              <TileLayer
-                attribution='&copy; OpenStreetMap contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
+          {/* MAP */}
+          <section className={`${UI.card} overflow-hidden`}>
+            <div className="w-full h-full">
+              <MapContainer
+                center={center}
+                zoom={12}
+                style={{ height: "100%", width: "100%" }}
+                scrollWheelZoom
+              >
+                {/* ✅ reliable ref */}
+                <MapRefSetter onMap={handleMap} />
 
-              {/* Me */}
-              {me ? (
-                <>
-                  <Marker position={[me.lat, me.lng]} icon={userIcon()}>
-                    <Popup autoPan>
-                      <div className="text-sm">
-                        <div className="font-semibold">Vous</div>
-                        <div className="text-xs text-gray-600">
-                          Position actuelle
+                <TileLayer
+                  attribution="&copy; OpenStreetMap contributors"
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+
+                {/* Me */}
+                {me ? (
+                  <>
+                    <Marker position={[me.lat, me.lng]} icon={userIcon()}>
+                      <Popup autoPan closeButton>
+                        <div className="text-xs w-[180px] space-y-1">
+                          <div className="font-semibold text-sm text-slate-900">
+                            Vous
+                          </div>
+                          <div className="text-slate-600">Position actuelle</div>
+                        </div>
+                      </Popup>
+                    </Marker>
+
+                    {radiusKm > 0 ? (
+                      <Circle
+                        center={[me.lat, me.lng]}
+                        radius={radiusKm * 1000}
+                        pathOptions={{}}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+
+                {visibleRowsWithCoords.map((p) => (
+                  <Marker
+                    key={p.id}
+                    position={[p.lat as number, p.lng as number]}
+                    icon={carIcon()}
+                    ref={(r) => {
+                      markerRefs.current[p.id] = r as unknown as L.Marker | null;
+                    }}
+                    eventHandlers={{
+                      click: () => focusParking(p.id), // ✅ CAR click => focus
+                    }}
+                  >
+                    <Popup autoPan closeButton>
+                      <div className="text-xs w-[200px] space-y-1">
+                        <div className="font-semibold text-sm leading-tight text-slate-900">
+                          {p.title}
+                        </div>
+
+                        <div className="text-slate-600 leading-snug">
+                          {formatAddress(p) || "Adresse non renseignée"}
+                        </div>
+
+                        {p.price_hour !== null ? (
+                          <div className="text-violet-700 font-semibold">
+                            {p.price_hour} CHF / h
+                          </div>
+                        ) : null}
+
+                        <div className="pt-1">
+                          <Link className={UI.link} href={`/parkings/${p.id}`}>
+                            Voir →
+                          </Link>
                         </div>
                       </div>
                     </Popup>
                   </Marker>
-
-                  {radiusKm > 0 ? (
-                    <Circle
-                      center={[me.lat, me.lng]}
-                      radius={radiusKm * 1000}
-                      pathOptions={{}}
-                    />
-                  ) : null}
-                </>
-              ) : null}
-
-              {/* Parkings */}
-              {visibleRowsWithCoords.map((p) => (
-                <Marker
-                  key={p.id}
-                  position={[p.lat as number, p.lng as number]}
-                  icon={carIcon()}
-                  ref={(m) => {
-                    markerRefs.current[p.id] = m;
-                  }}
-                  eventHandlers={{
-                    click: () => selectParking(p),
-                  }}
-                >
-                  <Popup autoPan>
-                    <div className="text-sm">
-                      <div className="font-semibold">{p.title}</div>
-                      <div className="text-xs text-gray-600">
-                        {formatAddress(p)}
-                      </div>
-                      {p.price_hour !== null && (
-                        <div className="mt-1">
-                          <b>{p.price_hour} CHF/h</b>
-                        </div>
-                      )}
-                      <div className="mt-2">
-                        <Link className="underline" href={`/parkings/${p.id}`}>
-                          Voir la place →
-                        </Link>
-                      </div>
-                    </div>
-                  </Popup>
-                </Marker>
-              ))}
-            </MapContainer>
-          </div>
-        </section>
+                ))}
+              </MapContainer>
+            </div>
+          </section>
+        </div>
       </div>
     </main>
   );
