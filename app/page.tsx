@@ -32,7 +32,16 @@ export default async function HomePage() {
       <div className={[UI.container, UI.section].join(" ")}>
         {/* HERO */}
         <section className={[UI.card, UI.cardPad, "relative overflow-hidden"].join(" ")}>
-          <div className="pointer-events-none absolute inset-0">
+          {/* ✅ Background image (méthode 2) */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+            {/* Image */}
+            <div
+              className="absolute inset-0 bg-cover bg-center"
+              style={{ backgroundImage: "url('/home-bg.jpg')" }}
+            />
+            {/* Overlay lisibilité */}
+           <div className="absolute inset-0 bg-white/10" />
+            {/* Petit glow premium (tu l’avais déjà, je le garde) */}
             <div className="absolute -top-24 -right-24 h-80 w-80 rounded-full bg-violet-500/12 blur-3xl" />
             <div className="absolute -bottom-28 -left-28 h-80 w-80 rounded-full bg-fuchsia-400/10 blur-3xl" />
           </div>
@@ -48,10 +57,12 @@ export default async function HomePage() {
               Parkeo — des places de parking disponibles, au bon endroit.
             </h1>
 
-            <p className={[UI.p, "mt-3 max-w-2xl"].join(" ")}>
-              Réservez à l’heure ou à la journée. Propriétaires et pros : mettez
-              vos places à disposition en quelques minutes.
-            </p>
+ <p className="mt-3 max-w-2xl text-base text-slate-900">
+  Réservez à l’heure ou à la journée. Propriétaires et pros : mettez
+  vos places à disposition en quelques minutes.
+</p>
+
+
 
             {/* 2 CTA */}
             <div className="mt-6 flex flex-col sm:flex-row gap-3">
@@ -64,9 +75,6 @@ export default async function HomePage() {
               </Link>
             </div>
 
-            <p className={[UI.subtle, "mt-4"].join(" ")}>
-              MVP local (Genève). Version PRO 🇨🇭 ensuite.
-            </p>
           </div>
         </section>
 
@@ -125,7 +133,10 @@ export default async function HomePage() {
               <div className={[UI.card, UI.cardPad].join(" ")}>
                 <p className={UI.p}>Aucune place disponible pour le moment.</p>
                 <div className="mt-4">
-                  <Link href="/parkings/new" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
+                  <Link
+                    href="/parkings/new"
+                    className={[UI.btnBase, UI.btnPrimary].join(" ")}
+                  >
                     Proposer une place
                   </Link>
                 </div>
