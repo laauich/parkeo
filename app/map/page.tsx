@@ -1,17 +1,23 @@
-"use client";
+// app/map/page.tsx
+import type { Metadata } from "next";
+import MapClient from "./map-client";
 
-import dynamicImport from "next/dynamic";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const MapClient = dynamicImport(() => import("./map-client").then((m) => m.default), {
-  ssr: false,
-  loading: () => (
-    <main className="max-w-6xl mx-auto p-6">
-      <div className="border rounded p-4 text-sm text-gray-600">
-        Chargement de la carte…
-      </div>
-    </main>
-  ),
-});
+export const metadata: Metadata = {
+  title: "Carte des parkings à Genève",
+  description:
+    "Carte interactive pour trouver une place de parking à Genève. Filtre par distance et accès direct aux détails des places disponibles.",
+  alternates: { canonical: "/map" },
+  openGraph: {
+    title: "Carte des parkings à Genève | Parkeo",
+    description:
+      "Carte interactive pour trouver une place de parking à Genève. Filtre par distance et accès direct aux détails des places disponibles.",
+    url: "/map",
+    type: "website",
+  },
+};
 
 export default function MapPage() {
   return <MapClient />;

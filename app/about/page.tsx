@@ -1,8 +1,24 @@
+// app/about/page.tsx
+import type { Metadata } from "next";
 import Link from "next/link";
 import { UI } from "@/app/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "À propos de Parkeo",
+  description:
+    "Parkeo est une plateforme de location et réservation de places de parking à Genève. Paiement sécurisé, réservation rapide, anti double-réservation.",
+  alternates: { canonical: "/about" },
+  openGraph: {
+    title: "À propos | Parkeo",
+    description:
+      "Plateforme de location et réservation de places de parking à Genève. Paiement sécurisé, réservation rapide, anti double-réservation.",
+    url: "/about",
+    type: "website",
+  },
+};
 
 export default function AboutPage() {
   return (
@@ -65,7 +81,7 @@ export default function AboutPage() {
           </div>
 
           <p className={UI.subtle}>
-            Contact / Support : ajoute ici ton email de support quand tu veux.
+            Support : ajoute ici ton email de support quand tu veux.
           </p>
         </section>
       </div>
