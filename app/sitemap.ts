@@ -4,73 +4,71 @@ import { createClient } from "@supabase/supabase-js";
 
 type ParkingRow = {
   id: string;
-  updated_at?: string | null;
-  created_at?: string | null;
-  is_active?: boolean | null;
+  created_at: string;
+  is_active: boolean | null;
 };
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.vercel.app";
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+    "https://parkeo.vercel.app";
 
-  // Pages “statiques”
+  const now = new Date();
+
+  // Pages statiques
   const staticRoutes: MetadataRoute.Sitemap = [
     {
       url: `${siteUrl}/`,
-      lastModified: new Date(),
+      lastModified: now,
       changeFrequency: "daily",
       priority: 1,
     },
     {
       url: `${siteUrl}/map`,
-      lastModified: new Date(),
+      lastModified: now,
       changeFrequency: "daily",
       priority: 0.9,
     },
     {
       url: `${siteUrl}/parkings`,
-      lastModified: new Date(),
+      lastModified: now,
       changeFrequency: "daily",
       priority: 0.9,
     },
     {
       url: `${siteUrl}/about`,
-      lastModified: new Date(),
+      lastModified: now,
       changeFrequency: "monthly",
       priority: 0.6,
     },
   ];
 
   // Parkings dynamiques
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
 
-  const { data, error } = await supabase
-    .from("parkings")
-    .select("id,updated_at,created_at,is_active")
-    .eq("is_active", true)
-    .order("created_at", { ascending: false })
-    .limit(5000);
+    const { data } = await supabase
+      .from("parkings")
+      .select("id,created_at,is_active")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false })
+      .limit(5000);
 
-  if (error || !data) {
-    // En cas d’erreur, on renvoie au moins le statique
-    return staticRoutes;
-  }
+    const rows = (data ?? []) as ParkingRow[];
 
-  const dynamicRoutes: MetadataRoute.Sitemap = (data as ParkingRow[]).map((p) => {
-    const lm = p.updated_at ?? p.created_at ?? null;
-    return {
+    const parkingRoutes: MetadataRoute.Sitemap = rows.map((p) => ({
       url: `${siteUrl}/parkings/${p.id}`,
-      lastModified: lm ? new Date(lm) : new Date(),
+      lastModified: p.created_at ? new Date(p.created_at) : now,
       changeFrequency: "weekly",
       priority: 0.7,
-    };
-  });
+    }));
 
-  return [...staticRoutes, ...dynamicRoutes];
+    return [...staticRoutes, ...parkingRoutes];
+  } catch {
+    // En cas d’erreur (env manquantes etc.), on renvoie au moins le statique
+    return staticRoutes;
+  }
 }

@@ -5,64 +5,47 @@ import NavbarClient from "./components/NavbarClient";
 import { AuthProvider } from "./providers/AuthProvider";
 
 const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.vercel.app";
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+  "https://parkeo.vercel.app";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-
   title: {
-    default: "Parkeo — Location et réservation de parkings à Genève",
+    default: "Parkeo | Réserver une place de parking à Genève",
     template: "%s | Parkeo",
   },
-  description: "Louez et réservez des places de parking à Genève. Carte interactive, réservation à l’heure ou à la journée, paiement sécurisé.",
-  applicationName: "Parkeo",
-
+  description:
+    "Trouvez et réservez une place de parking à Genève. Réservation à l’heure ou à la journée, paiement sécurisé.",
   alternates: {
     canonical: "/",
   },
-
   openGraph: {
-    type: "website",
+    title: "Parkeo | Réserver une place de parking à Genève",
+    description:
+      "Trouvez et réservez une place de parking à Genève. Réservation à l’heure ou à la journée, paiement sécurisé.",
     url: siteUrl,
     siteName: "Parkeo",
-    title: "Parkeo — Location et réservation de parkings à Genève",
-    description:
-      "Trouvez facilement une place de parking à Genève. Réservation rapide à l’heure ou à la journée, paiement sécurisé.",
-    // Optionnel: ajoute une image OG si tu en as une
-    // images: [{ url: "/og.jpg", width: 1200, height: 630, alt: "Parkeo" }],
     locale: "fr_CH",
+    type: "website",
   },
-
   twitter: {
     card: "summary_large_image",
-    title: "Parkeo — Location et réservation de parkings à Genève",
+    title: "Parkeo | Réserver une place de parking à Genève",
     description:
-      "Carte interactive, réservation rapide, paiement sécurisé. Parkings disponibles à Genève.",
-    // images: ["/og.jpg"],
-  },
-
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      "max-image-preview": "large",
-      "max-snippet": -1,
-      "max-video-preview": -1,
-    },
+      "Trouvez et réservez une place de parking à Genève. Réservation à l’heure ou à la journée, paiement sécurisé.",
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="fr">
       <body>
         <AuthProvider>
-          {/* ✅ Un seul menu */}
           <NavbarClient />
-
-          {/* contenu */}
           <div className="max-w-6xl mx-auto px-6 py-6">{children}</div>
         </AuthProvider>
       </body>
