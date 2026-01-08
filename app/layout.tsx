@@ -1,29 +1,45 @@
 // app/layout.tsx
 import "./globals.css";
+import type { Metadata } from "next";
 import NavbarClient from "./components/NavbarClient";
 import { AuthProvider } from "./providers/AuthProvider";
-import type { Metadata } from "next";
 
-const SITE_NAME = "Parkeo";
-const SITE_URL = "https://parkeo.ch"; // ✅ ton domaine
-const DEFAULT_TITLE =
-  "Parkeo — Location & réservation de places de parking à Genève";
-const DEFAULT_DESC =
-  "Trouvez ou louez facilement une place de parking à Genève. Réservation à l’heure ou à la journée. Simple, sécurisé, local.";
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.vercel.app";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(SITE_URL),
+  metadataBase: new URL(siteUrl),
 
   title: {
-    default: DEFAULT_TITLE,
-    template: `%s · ${SITE_NAME}`,
+    default: "Parkeo — Location et réservation de parkings à Genève",
+    template: "%s | Parkeo",
   },
-  description: DEFAULT_DESC,
+  description: "Louez et réservez des places de parking à Genève. Carte interactive, réservation à l’heure ou à la journée, paiement sécurisé.",
+  applicationName: "Parkeo",
 
-  applicationName: SITE_NAME,
-  authors: [{ name: SITE_NAME }],
-  generator: "Next.js",
-  referrer: "origin-when-cross-origin",
+  alternates: {
+    canonical: "/",
+  },
+
+  openGraph: {
+    type: "website",
+    url: siteUrl,
+    siteName: "Parkeo",
+    title: "Parkeo — Location et réservation de parkings à Genève",
+    description:
+      "Trouvez facilement une place de parking à Genève. Réservation rapide à l’heure ou à la journée, paiement sécurisé.",
+    // Optionnel: ajoute une image OG si tu en as une
+    // images: [{ url: "/og.jpg", width: 1200, height: 630, alt: "Parkeo" }],
+    locale: "fr_CH",
+  },
+
+  twitter: {
+    card: "summary_large_image",
+    title: "Parkeo — Location et réservation de parkings à Genève",
+    description:
+      "Carte interactive, réservation rapide, paiement sécurisé. Parkings disponibles à Genève.",
+    // images: ["/og.jpg"],
+  },
 
   robots: {
     index: true,
@@ -36,46 +52,9 @@ export const metadata: Metadata = {
       "max-video-preview": -1,
     },
   },
-
-  alternates: {
-    canonical: "/",
-  },
-
-  openGraph: {
-    type: "website",
-    url: SITE_URL,
-    siteName: SITE_NAME,
-    title: DEFAULT_TITLE,
-    description: DEFAULT_DESC,
-    locale: "fr_CH",
-    images: [
-      {
-        url: "/og.jpg", // ✅ optionnel (tu peux le créer plus tard)
-        width: 1200,
-        height: 630,
-        alt: "Parkeo — Places de parking à Genève",
-      },
-    ],
-  },
-
-  twitter: {
-    card: "summary_large_image",
-    title: DEFAULT_TITLE,
-    description: DEFAULT_DESC,
-    images: ["/og.jpg"], // ✅ optionnel
-  },
-
-  icons: {
-    icon: "/favicon.ico",
-    // apple: "/apple-touch-icon.png", // optionnel
-  },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr">
       <body>
