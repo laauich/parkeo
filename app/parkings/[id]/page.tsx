@@ -76,19 +76,37 @@ export async function generateMetadata({
   const { id } = await params;
   const p = await getParking(id);
 
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+    "https://parkeo.ch";
+
   if (!p) {
     return {
       title: "Place introuvable",
       description: "Cette place de parking n’existe pas ou n’est plus active.",
       alternates: { canonical: `/parkings/${id}` },
+      openGraph: {
+        title: "Place introuvable | Parkeo",
+        description: "Cette place de parking n’existe pas ou n’est plus active.",
+        url: `${siteUrl}/parkings/${id}`,
+        type: "website",
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: "Place introuvable | Parkeo",
+        description: "Cette place de parking n’existe pas ou n’est plus active.",
+      },
     };
   }
 
   const addr = fullAddress(p);
   const title = `${p.title} – Parking à Genève`;
-  const desc = `Réservez cette place de parking à Genève. ${
-    addr ? `Adresse : ${addr}. ` : ""
-  }Prix : ${p.price_hour} CHF/h${p.price_day ? `, ${p.price_day} CHF/j` : ""}.`;
+  const desc = `Réservez cette place de parking à Genève. ${addr ? `Adresse : ${addr}. ` : ""}Prix : ${p.price_hour} CHF/h${
+    p.price_day ? `, ${p.price_day} CHF/j` : ""
+  }.`;
+
+  // ✅ Image OG: on prend la 1ère photo si dispo, sinon rien
+  const ogImage = Array.isArray(p.photos) && p.photos.length ? p.photos[0] : null;
 
   return {
     title,
@@ -97,8 +115,24 @@ export async function generateMetadata({
     openGraph: {
       title: `${p.title} | Parkeo`,
       description: desc,
-      url: `/parkings/${p.id}`,
+      url: `${siteUrl}/parkings/${p.id}`,
       type: "website",
+      images: ogImage
+        ? [
+            {
+              url: ogImage,
+              width: 1200,
+              height: 630,
+              alt: p.title,
+            },
+          ]
+        : undefined,
+    },
+    twitter: {
+      card: ogImage ? "summary_large_image" : "summary",
+      title: `${p.title} | Parkeo`,
+      description: desc,
+      images: ogImage ? [ogImage] : undefined,
     },
   };
 }
