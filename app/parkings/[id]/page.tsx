@@ -133,7 +133,7 @@ export default async function ParkingDetailPage({
   // ✅ URL du site (défaut = Vercel). Tu peux remplacer par https://parkeo.ch quand ton domaine sera branché.
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    "https://parkeo.vercel.app";
+    "https://parkeo.ch";
 
   const addr = fullAddress(p);
   const url = `${siteUrl}/parkings/${p.id}`;

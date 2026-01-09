@@ -35,7 +35,7 @@ export default async function ParkingsPage() {
   // ✅ Base URL (mets https://parkeo.ch quand ton domaine est actif)
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    "https://parkeo.vercel.app";
+    "https://parkeo.ch";
 
   // ✅ Fetch server-side (pour JSON-LD)
   const supabase = createClient(
