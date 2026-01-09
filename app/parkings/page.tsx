@@ -32,12 +32,31 @@ type ParkingLite = {
 };
 
 export default async function ParkingsPage() {
-  // ✅ Base URL (mets https://parkeo.ch quand ton domaine est actif)
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
     "https://parkeo.ch";
 
-  // ✅ Fetch server-side (pour JSON-LD)
+  // ✅ BreadcrumbList JSON-LD
+  const breadcrumbLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "Accueil",
+        item: `${siteUrl}/`,
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "Parkings à Genève",
+        item: `${siteUrl}/parkings`,
+      },
+    ],
+  };
+
+  // ✅ Fetch server-side (pour ItemList JSON-LD)
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -52,58 +71,58 @@ export default async function ParkingsPage() {
 
   const rows = (data ?? []) as ParkingLite[];
 
-  // ✅ JSON-LD ItemList (schema.org)
-  const jsonLd =
+  // ✅ ItemList JSON-LD (liste d’annonces)
+  const itemListLd =
     rows.length > 0
       ? {
           "@context": "https://schema.org",
           "@type": "ItemList",
-          "name": "Places de parking disponibles à Genève",
-          "itemListOrder": "https://schema.org/ItemListOrderDescending",
-          "numberOfItems": rows.length,
-          "itemListElement": rows.map((p, idx) => {
+          name: "Places de parking disponibles à Genève",
+          itemListOrder: "https://schema.org/ItemListOrderDescending",
+          numberOfItems: rows.length,
+          itemListElement: rows.map((p, idx) => {
             const url = `${siteUrl}/parkings/${p.id}`;
             const img = Array.isArray(p.photos) ? p.photos.filter(Boolean) : [];
             const locality = p.city ?? "Genève";
 
             return {
               "@type": "ListItem",
-              "position": idx + 1,
-              "url": url,
-              "item": {
+              position: idx + 1,
+              url,
+              item: {
                 "@type": "ParkingFacility",
                 "@id": url,
-                "name": p.title,
-                "url": url,
-                "image": img.length ? img : undefined,
-                "address": {
+                name: p.title,
+                url,
+                image: img.length ? img : undefined,
+                address: {
                   "@type": "PostalAddress",
-                  "streetAddress": p.address ?? undefined,
-                  "addressLocality": locality,
-                  "addressCountry": "CH",
+                  streetAddress: p.address ?? undefined,
+                  addressLocality: locality,
+                  addressCountry: "CH",
                 },
-                "offers":
+                offers:
                   typeof p.price_hour === "number"
                     ? {
                         "@type": "Offer",
-                        "priceCurrency": "CHF",
-                        "price": p.price_hour,
-                        "availability": "https://schema.org/InStock",
-                        "url": url,
-                        "priceSpecification": [
+                        priceCurrency: "CHF",
+                        price: p.price_hour,
+                        availability: "https://schema.org/InStock",
+                        url,
+                        priceSpecification: [
                           {
                             "@type": "UnitPriceSpecification",
-                            "priceCurrency": "CHF",
-                            "price": p.price_hour,
-                            "unitText": "HOUR",
+                            priceCurrency: "CHF",
+                            price: p.price_hour,
+                            unitText: "HOUR",
                           },
                           ...(typeof p.price_day === "number"
                             ? [
                                 {
                                   "@type": "UnitPriceSpecification",
-                                  "priceCurrency": "CHF",
-                                  "price": p.price_day,
-                                  "unitText": "DAY",
+                                  priceCurrency: "CHF",
+                                  price: p.price_day,
+                                  unitText: "DAY",
                                 },
                               ]
                             : []),
@@ -118,11 +137,17 @@ export default async function ParkingsPage() {
 
   return (
     <>
-      {/* ✅ JSON-LD pour Google */}
-      {jsonLd ? (
+      {/* ✅ Breadcrumb JSON-LD */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
+      />
+
+      {/* ✅ ItemList JSON-LD */}
+      {itemListLd ? (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListLd) }}
         />
       ) : null}
 

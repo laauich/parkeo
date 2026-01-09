@@ -86,9 +86,9 @@ export async function generateMetadata({
 
   const addr = fullAddress(p);
   const title = `${p.title} – Parking à Genève`;
-  const desc = `Réservez cette place de parking à Genève. ${addr ? `Adresse : ${addr}. ` : ""}Prix : ${p.price_hour} CHF/h${
-    p.price_day ? `, ${p.price_day} CHF/j` : ""
-  }.`;
+  const desc = `Réservez cette place de parking à Genève. ${
+    addr ? `Adresse : ${addr}. ` : ""
+  }Prix : ${p.price_hour} CHF/h${p.price_day ? `, ${p.price_day} CHF/j` : ""}.`;
 
   return {
     title,
@@ -116,6 +116,10 @@ export default async function ParkingDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+    "https://parkeo.ch";
+
   const { id } = await params;
   const p = await getParking(id);
 
@@ -130,69 +134,94 @@ export default async function ParkingDetailPage({
     );
   }
 
-  // ✅ URL du site (défaut = Vercel). Tu peux remplacer par https://parkeo.ch quand ton domaine sera branché.
-  const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    "https://parkeo.ch";
-
+  const canonicalUrl = `${siteUrl}/parkings/${p.id}`;
   const addr = fullAddress(p);
-  const url = `${siteUrl}/parkings/${p.id}`;
-  const images = (Array.isArray(p.photos) ? p.photos : []).filter(Boolean);
+  const photos = Array.isArray(p.photos) ? p.photos.filter(Boolean) : [];
+  const city = p.city ?? "Genève";
 
-  // ✅ JSON-LD schema.org : ParkingFacility + Offer
-  const jsonLd = {
+  // ✅ BreadcrumbList JSON-LD
+  const breadcrumbLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Accueil", item: `${siteUrl}/` },
+      { "@type": "ListItem", position: 2, name: "Parkings à Genève", item: `${siteUrl}/parkings` },
+      { "@type": "ListItem", position: 3, name: p.title, item: canonicalUrl },
+    ],
+  };
+
+  // ✅ Parking detail JSON-LD (ParkingFacility + Offer)
+  const parkingLd = {
     "@context": "https://schema.org",
     "@type": "ParkingFacility",
-    "@id": url,
-    "name": p.title,
-    "url": url,
-    "image": images.length ? images : undefined,
-    "description":
-      p.instructions?.trim() ||
-      `Place de parking à Genève. ${addr ? `Adresse : ${addr}. ` : ""}Réservation à l’heure ou à la journée.`,
-    "address": {
+    "@id": canonicalUrl,
+    name: p.title,
+    url: canonicalUrl,
+    image: photos.length ? photos : undefined,
+    address: {
       "@type": "PostalAddress",
-      "streetAddress": `${p.street ?? ""}${p.street_number ? " " + p.street_number : ""}`.trim() || addr,
-      "postalCode": p.postal_code ?? undefined,
-      "addressLocality": p.city ?? "Genève",
-      "addressCountry": "CH",
+      streetAddress: addr || undefined,
+      addressLocality: city,
+      addressCountry: "CH",
     },
-    ...(typeof p.lat === "number" && typeof p.lng === "number"
-      ? {
-          "geo": {
+    geo:
+      typeof p.lat === "number" && typeof p.lng === "number"
+        ? {
             "@type": "GeoCoordinates",
-            "latitude": p.lat,
-            "longitude": p.lng,
-          },
-        }
-      : {}),
-    "amenityFeature": [
-      ...(p.is_covered ? [{ "@type": "LocationFeatureSpecification", "name": "Couvert", "value": true }] : []),
-      ...(p.has_ev_charger ? [{ "@type": "LocationFeatureSpecification", "name": "Borne EV", "value": true }] : []),
-      ...(p.is_secure ? [{ "@type": "LocationFeatureSpecification", "name": "Sécurisé", "value": true }] : []),
-      ...(p.is_lit ? [{ "@type": "LocationFeatureSpecification", "name": "Éclairé", "value": true }] : []),
-    ],
-    "offers": {
+            latitude: p.lat,
+            longitude: p.lng,
+          }
+        : undefined,
+    amenityFeature: [
+      p.is_covered != null
+        ? {
+            "@type": "LocationFeatureSpecification",
+            name: "Couvert",
+            value: Boolean(p.is_covered),
+          }
+        : null,
+      p.has_ev_charger
+        ? {
+            "@type": "LocationFeatureSpecification",
+            name: "Borne de recharge (EV)",
+            value: true,
+          }
+        : null,
+      p.is_secure
+        ? {
+            "@type": "LocationFeatureSpecification",
+            name: "Sécurisé",
+            value: true,
+          }
+        : null,
+      p.is_lit
+        ? {
+            "@type": "LocationFeatureSpecification",
+            name: "Éclairé",
+            value: true,
+          }
+        : null,
+    ].filter(Boolean),
+    offers: {
       "@type": "Offer",
-      "priceCurrency": "CHF",
-      "price": p.price_hour,
-      "availability": "https://schema.org/InStock",
-      "url": url,
-      "validFrom": new Date().toISOString(),
-      "priceSpecification": [
+      url: canonicalUrl,
+      priceCurrency: "CHF",
+      price: p.price_hour,
+      availability: "https://schema.org/InStock",
+      priceSpecification: [
         {
           "@type": "UnitPriceSpecification",
-          "priceCurrency": "CHF",
-          "price": p.price_hour,
-          "unitText": "HOUR",
+          priceCurrency: "CHF",
+          price: p.price_hour,
+          unitText: "HOUR",
         },
-        ...(p.price_day
+        ...(typeof p.price_day === "number"
           ? [
               {
                 "@type": "UnitPriceSpecification",
-                "priceCurrency": "CHF",
-                "price": p.price_day,
-                "unitText": "DAY",
+                priceCurrency: "CHF",
+                price: p.price_day,
+                unitText: "DAY",
               },
             ]
           : []),
@@ -202,10 +231,16 @@ export default async function ParkingDetailPage({
 
   return (
     <>
-      {/* ✅ JSON-LD injecté dans le HTML (SEO) */}
+      {/* ✅ Breadcrumb JSON-LD */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
+      />
+
+      {/* ✅ Parking JSON-LD */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(parkingLd) }}
       />
 
       <main className="max-w-5xl mx-auto p-6 space-y-6">
