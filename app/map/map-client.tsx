@@ -261,11 +261,11 @@ export default function MapClient() {
       // find coords (only if marker exists)
       const p = visibleRowsWithCoords.find((x) => x.id === id) ?? null;
 
-      // open popup first (you said this works and you want it)
+      // open popup first
       const mk = markerRefs.current[id];
       if (mk) mk.openPopup();
 
-      // then recenter+zoom (ensure map size is correct)
+      // then recenter+zoom
       const map = mapRef.current;
       if (!map || !p) return;
 
@@ -329,228 +329,243 @@ export default function MapClient() {
     }
   };
 
-  // UI cosmetics (no logic changes elsewhere)
+  // UI cosmetics
   const btnPrimary = `${UI.btnBase} ${UI.btnPrimary}`;
   const btnGhost = `${UI.btnBase} ${UI.btnGhost}`;
 
   return (
     <main className={UI.page}>
-      <div className={`${UI.container} ${UI.section} space-y-4`}>
-        <header className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <h1 className={UI.h2}>Carte des parkings</h1>
-            <p className={UI.p}>1 clic = recentre + zoom + popup</p>
-            {geoStatus ? <p className={UI.subtle}>{geoStatus}</p> : null}
-          </div>
-
-          <div className="flex gap-2">
-            <Link href="/parkings" className={btnGhost}>
-              Vue liste
-            </Link>
-          </div>
-        </header>
-
-        {/* Autour de moi */}
-        <section className={`${UI.card} ${UI.cardPad} flex flex-wrap items-center gap-3`}>
-          <button type="button" className={btnPrimary} onClick={locateMe}>
-            📍 Autour de moi
-          </button>
-
-          <button type="button" className={btnGhost} onClick={clearMe}>
-            Réinitialiser
-          </button>
-
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-slate-600">Rayon :</span>
-            <select
-              className={UI.select + " w-auto min-w-[140px]"}
-              value={radiusKm}
-              onChange={(e) => setRadiusKm(Number(e.target.value))}
-              disabled={!me}
-              title={!me ? "Active “Autour de moi” d’abord" : ""}
-            >
-              <option value={0}>Tout</option>
-              <option value={1}>1 km</option>
-              <option value={2}>2 km</option>
-              <option value={5}>5 km</option>
-              <option value={10}>10 km</option>
-            </select>
-
-            <span className={UI.subtle}>
-              {me
-                ? `${visibleRowsWithCoords.length} place(s) sur la carte`
-                : "Active le GPS pour filtrer"}
-            </span>
-          </div>
-        </section>
-
-        {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
-
-        {/* Layout: list left, map right */}
-        <div className="grid lg:grid-cols-2 gap-4" style={{ height: 620 }}>
-          {/* LIST */}
-          <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="font-medium text-sm text-slate-900">
-                Places disponibles{" "}
-                <span className={UI.subtle}>({visibleRows.length})</span>
-              </div>
-
-              <button className={btnGhost} onClick={load} disabled={loading}>
-                {loading ? "…" : "Rafraîchir"}
-              </button>
+      {/* ✅ Full width wrapper (no max width here) */}
+      <div className={`w-full ${UI.section} space-y-4`}>
+        {/* ✅ Header + controls stay "nice" in container */}
+        <div className={`${UI.container} space-y-4`}>
+          <header className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <h1 className={UI.h2}>Carte des parkings</h1>
+              <p className={UI.p}>1 clic = recentre + zoom + popup</p>
+              {geoStatus ? <p className={UI.subtle}>{geoStatus}</p> : null}
             </div>
 
-            <div className="space-y-3">
-              {visibleRows.map((p) => {
-                const photo = p.photos?.[0] ?? null;
-                const active = selectedId === p.id;
-
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => focusParking(p.id)} // ✅ LIST click => focus
-                    className={`w-full text-left ${UI.card} ${UI.cardHover} overflow-hidden ${
-                      active ? "ring-2 ring-violet-400" : ""
-                    }`}
-                  >
-                    <div className="flex">
-                      <div className="w-28 h-20 bg-slate-100 shrink-0">
-                        {photo ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={photo}
-                            alt=""
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
-                            —
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="p-4 flex-1">
-                        <div className="flex justify-between gap-3">
-                          <div className="font-medium text-slate-900">
-                            {p.title}
-                          </div>
-                          {p.price_hour !== null && (
-                            <div className="text-sm whitespace-nowrap font-semibold text-violet-700">
-                              {p.price_hour} CHF/h
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="text-xs text-slate-600 mt-1">
-                          {formatAddress(p) || "Adresse non renseignée"}
-                        </div>
-
-                        <div className="mt-2">
-                          <Link
-                            href={`/parkings/${p.id}`}
-                            className={UI.link + " text-xs"}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            Voir la place →
-                          </Link>
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-
-              {!loading && visibleRows.length === 0 && (
-                <p className="text-sm text-slate-600">
-                  Aucune place trouvée pour ce rayon.
-                </p>
-              )}
+            <div className="flex gap-2">
+              <Link href="/parkings" className={btnGhost}>
+                Vue liste
+              </Link>
             </div>
-          </section>
+          </header>
 
-          {/* MAP */}
-          <section className={`${UI.card} overflow-hidden`}>
-            <div className="w-full h-full">
-              <MapContainer
-                center={center}
-                zoom={12}
-                style={{ height: "100%", width: "100%" }}
-                scrollWheelZoom
+          {/* Autour de moi */}
+          <section
+            className={`${UI.card} ${UI.cardPad} flex flex-wrap items-center gap-3`}
+          >
+            <button type="button" className={btnPrimary} onClick={locateMe}>
+              📍 Autour de moi
+            </button>
+
+            <button type="button" className={btnGhost} onClick={clearMe}>
+              Réinitialiser
+            </button>
+
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-slate-600">Rayon :</span>
+              <select
+                className={UI.select + " w-auto min-w-[140px]"}
+                value={radiusKm}
+                onChange={(e) => setRadiusKm(Number(e.target.value))}
+                disabled={!me}
+                title={!me ? "Active “Autour de moi” d’abord" : ""}
               >
-                {/* ✅ reliable ref */}
-                <MapRefSetter onMap={handleMap} />
+                <option value={0}>Tout</option>
+                <option value={1}>1 km</option>
+                <option value={2}>2 km</option>
+                <option value={5}>5 km</option>
+                <option value={10}>10 km</option>
+              </select>
 
-                <TileLayer
-                  attribution="&copy; OpenStreetMap contributors"
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-
-                {/* Me */}
-                {me ? (
-                  <>
-                    <Marker position={[me.lat, me.lng]} icon={userIcon()}>
-                      <Popup autoPan closeButton>
-                        <div className="text-xs w-[180px] space-y-1">
-                          <div className="font-semibold text-sm text-slate-900">
-                            Vous
-                          </div>
-                          <div className="text-slate-600">Position actuelle</div>
-                        </div>
-                      </Popup>
-                    </Marker>
-
-                    {radiusKm > 0 ? (
-                      <Circle
-                        center={[me.lat, me.lng]}
-                        radius={radiusKm * 1000}
-                        pathOptions={{}}
-                      />
-                    ) : null}
-                  </>
-                ) : null}
-
-                {visibleRowsWithCoords.map((p) => (
-                  <Marker
-                    key={p.id}
-                    position={[p.lat as number, p.lng as number]}
-                    icon={carIcon()}
-                    ref={(r) => {
-                      markerRefs.current[p.id] = r as unknown as L.Marker | null;
-                    }}
-                    eventHandlers={{
-                      click: () => focusParking(p.id), // ✅ CAR click => focus
-                    }}
-                  >
-                    <Popup autoPan closeButton>
-                      <div className="text-xs w-[200px] space-y-1">
-                        <div className="font-semibold text-sm leading-tight text-slate-900">
-                          {p.title}
-                        </div>
-
-                        <div className="text-slate-600 leading-snug">
-                          {formatAddress(p) || "Adresse non renseignée"}
-                        </div>
-
-                        {p.price_hour !== null ? (
-                          <div className="text-violet-700 font-semibold">
-                            {p.price_hour} CHF / h
-                          </div>
-                        ) : null}
-
-                        <div className="pt-1">
-                          <Link className={UI.link} href={`/parkings/${p.id}`}>
-                            Voir →
-                          </Link>
-                        </div>
-                      </div>
-                    </Popup>
-                  </Marker>
-                ))}
-              </MapContainer>
+              <span className={UI.subtle}>
+                {me
+                  ? `${visibleRowsWithCoords.length} place(s) sur la carte`
+                  : "Active le GPS pour filtrer"}
+              </span>
             </div>
           </section>
+
+          {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
+        </div>
+
+        {/* ✅ Map+List in full width */}
+        <div className="w-full px-0">
+          {/* We still keep a little padding so it doesn't stick to screen edges */}
+          <div className="w-full px-4 sm:px-6 lg:px-8">
+            {/* ✅ Responsive height: mobile uses viewport, desktop fixed */}
+            <div className="grid lg:grid-cols-2 gap-4 h-[70vh] lg:h-[680px]">
+              {/* LIST */}
+              <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="font-medium text-sm text-slate-900">
+                    Places disponibles{" "}
+                    <span className={UI.subtle}>({visibleRows.length})</span>
+                  </div>
+
+                  <button className={btnGhost} onClick={load} disabled={loading}>
+                    {loading ? "…" : "Rafraîchir"}
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {visibleRows.map((p) => {
+                    const photo = p.photos?.[0] ?? null;
+                    const active = selectedId === p.id;
+
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => focusParking(p.id)}
+                        className={`w-full text-left ${UI.card} ${UI.cardHover} overflow-hidden ${
+                          active ? "ring-2 ring-violet-400" : ""
+                        }`}
+                      >
+                        <div className="flex">
+                          <div className="w-28 h-20 bg-slate-100 shrink-0">
+                            {photo ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={photo}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                                —
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="p-4 flex-1">
+                            <div className="flex justify-between gap-3">
+                              <div className="font-medium text-slate-900">
+                                {p.title}
+                              </div>
+                              {p.price_hour !== null && (
+                                <div className="text-sm whitespace-nowrap font-semibold text-violet-700">
+                                  {p.price_hour} CHF/h
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="text-xs text-slate-600 mt-1">
+                              {formatAddress(p) || "Adresse non renseignée"}
+                            </div>
+
+                            <div className="mt-2">
+                              <Link
+                                href={`/parkings/${p.id}`}
+                                className={UI.link + " text-xs"}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Voir la place →
+                              </Link>
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+
+                  {!loading && visibleRows.length === 0 && (
+                    <p className="text-sm text-slate-600">
+                      Aucune place trouvée pour ce rayon.
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              {/* MAP */}
+              <section className={`${UI.card} overflow-hidden`}>
+                <div className="w-full h-full">
+                  <MapContainer
+                    center={center}
+                    zoom={12}
+                    style={{ height: "100%", width: "100%" }}
+                    scrollWheelZoom
+                  >
+                    {/* ✅ reliable ref */}
+                    <MapRefSetter onMap={handleMap} />
+
+                    <TileLayer
+                      attribution="&copy; OpenStreetMap contributors"
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+
+                    {/* Me */}
+                    {me ? (
+                      <>
+                        <Marker position={[me.lat, me.lng]} icon={userIcon()}>
+                          <Popup autoPan closeButton>
+                            <div className="text-xs w-[180px] space-y-1">
+                              <div className="font-semibold text-sm text-slate-900">
+                                Vous
+                              </div>
+                              <div className="text-slate-600">
+                                Position actuelle
+                              </div>
+                            </div>
+                          </Popup>
+                        </Marker>
+
+                        {radiusKm > 0 ? (
+                          <Circle
+                            center={[me.lat, me.lng]}
+                            radius={radiusKm * 1000}
+                            pathOptions={{}}
+                          />
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    {visibleRowsWithCoords.map((p) => (
+                      <Marker
+                        key={p.id}
+                        position={[p.lat as number, p.lng as number]}
+                        icon={carIcon()}
+                        ref={(r) => {
+                          markerRefs.current[p.id] =
+                            r as unknown as L.Marker | null;
+                        }}
+                        eventHandlers={{
+                          click: () => focusParking(p.id),
+                        }}
+                      >
+                        <Popup autoPan closeButton>
+                          <div className="text-xs w-[200px] space-y-1">
+                            <div className="font-semibold text-sm leading-tight text-slate-900">
+                              {p.title}
+                            </div>
+
+                            <div className="text-slate-600 leading-snug">
+                              {formatAddress(p) || "Adresse non renseignée"}
+                            </div>
+
+                            {p.price_hour !== null ? (
+                              <div className="text-violet-700 font-semibold">
+                                {p.price_hour} CHF / h
+                              </div>
+                            ) : null}
+
+                            <div className="pt-1">
+                              <Link className={UI.link} href={`/parkings/${p.id}`}>
+                                Voir →
+                              </Link>
+                            </div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    ))}
+                  </MapContainer>
+                </div>
+              </section>
+            </div>
+          </div>
         </div>
       </div>
     </main>

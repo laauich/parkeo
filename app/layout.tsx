@@ -6,7 +6,7 @@ import { AuthProvider } from "./providers/AuthProvider";
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-  "https://parkeo.vercel.app";
+  "https://parkeo.ch";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -43,10 +43,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="fr">
-      <body>
+      <body className="min-h-screen flex flex-col">
         <AuthProvider>
           <NavbarClient />
-          <div className="max-w-6xl mx-auto px-6 py-6">{children}</div>
+
+          {/* ✅ Full width + full height (le contenu prend toute la place restante sous la navbar) */}
+          <div className="flex-1 w-full">{children}</div>
         </AuthProvider>
       </body>
     </html>

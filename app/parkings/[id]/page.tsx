@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import BookingForm from "./booking-form";
+import { UI } from "@/app/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,8 +78,7 @@ export async function generateMetadata({
   const p = await getParking(id);
 
   const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    "https://parkeo.ch";
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.ch";
 
   if (!p) {
     return {
@@ -101,11 +101,10 @@ export async function generateMetadata({
 
   const addr = fullAddress(p);
   const title = `${p.title} – Parking à Genève`;
-  const desc = `Réservez cette place de parking à Genève. ${addr ? `Adresse : ${addr}. ` : ""}Prix : ${p.price_hour} CHF/h${
-    p.price_day ? `, ${p.price_day} CHF/j` : ""
-  }.`;
+  const desc = `Réservez cette place de parking à Genève. ${
+    addr ? `Adresse : ${addr}. ` : ""
+  }Prix : ${p.price_hour} CHF/h${p.price_day ? `, ${p.price_day} CHF/j` : ""}.`;
 
-  // ✅ Image OG: on prend la 1ère photo si dispo, sinon rien
   const ogImage = Array.isArray(p.photos) && p.photos.length ? p.photos[0] : null;
 
   return {
@@ -138,11 +137,8 @@ export async function generateMetadata({
 }
 
 function Badge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs text-gray-700">
-      {children}
-    </span>
-  );
+  // ✅ harmonisé avec ton design
+  return <span className={UI.chip}>{children}</span>;
 }
 
 export default async function ParkingDetailPage({
@@ -151,19 +147,22 @@ export default async function ParkingDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    "https://parkeo.ch";
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.ch";
 
   const { id } = await params;
   const p = await getParking(id);
 
   if (!p) {
     return (
-      <main className="max-w-3xl mx-auto p-6">
-        <p className="text-red-600">Parking introuvable.</p>
-        <Link className="underline" href="/parkings">
-          Retour
-        </Link>
+      <main className={UI.page}>
+        <div className={[UI.container, UI.section].join(" ")}>
+          <div className={[UI.card, UI.cardPad, "space-y-3"].join(" ")}>
+            <p className="text-sm text-rose-600 font-medium">Parking introuvable.</p>
+            <Link className={UI.link} href="/parkings">
+              ← Retour aux parkings
+            </Link>
+          </div>
+        </div>
       </main>
     );
   }
@@ -173,7 +172,6 @@ export default async function ParkingDetailPage({
   const photos = Array.isArray(p.photos) ? p.photos.filter(Boolean) : [];
   const city = p.city ?? "Genève";
 
-  // ✅ BreadcrumbList JSON-LD
   const breadcrumbLd = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
@@ -184,7 +182,6 @@ export default async function ParkingDetailPage({
     ],
   };
 
-  // ✅ Parking detail JSON-LD (ParkingFacility + Offer)
   const parkingLd = {
     "@context": "https://schema.org",
     "@type": "ParkingFacility",
@@ -200,40 +197,20 @@ export default async function ParkingDetailPage({
     },
     geo:
       typeof p.lat === "number" && typeof p.lng === "number"
-        ? {
-            "@type": "GeoCoordinates",
-            latitude: p.lat,
-            longitude: p.lng,
-          }
+        ? { "@type": "GeoCoordinates", latitude: p.lat, longitude: p.lng }
         : undefined,
     amenityFeature: [
       p.is_covered != null
-        ? {
-            "@type": "LocationFeatureSpecification",
-            name: "Couvert",
-            value: Boolean(p.is_covered),
-          }
+        ? { "@type": "LocationFeatureSpecification", name: "Couvert", value: Boolean(p.is_covered) }
         : null,
       p.has_ev_charger
-        ? {
-            "@type": "LocationFeatureSpecification",
-            name: "Borne de recharge (EV)",
-            value: true,
-          }
+        ? { "@type": "LocationFeatureSpecification", name: "Borne de recharge (EV)", value: true }
         : null,
       p.is_secure
-        ? {
-            "@type": "LocationFeatureSpecification",
-            name: "Sécurisé",
-            value: true,
-          }
+        ? { "@type": "LocationFeatureSpecification", name: "Sécurisé", value: true }
         : null,
       p.is_lit
-        ? {
-            "@type": "LocationFeatureSpecification",
-            name: "Éclairé",
-            value: true,
-          }
+        ? { "@type": "LocationFeatureSpecification", name: "Éclairé", value: true }
         : null,
     ].filter(Boolean),
     offers: {
@@ -243,21 +220,9 @@ export default async function ParkingDetailPage({
       price: p.price_hour,
       availability: "https://schema.org/InStock",
       priceSpecification: [
-        {
-          "@type": "UnitPriceSpecification",
-          priceCurrency: "CHF",
-          price: p.price_hour,
-          unitText: "HOUR",
-        },
+        { "@type": "UnitPriceSpecification", priceCurrency: "CHF", price: p.price_hour, unitText: "HOUR" },
         ...(typeof p.price_day === "number"
-          ? [
-              {
-                "@type": "UnitPriceSpecification",
-                priceCurrency: "CHF",
-                price: p.price_day,
-                unitText: "DAY",
-              },
-            ]
+          ? [{ "@type": "UnitPriceSpecification", priceCurrency: "CHF", price: p.price_day, unitText: "DAY" }]
           : []),
       ],
     },
@@ -265,83 +230,99 @@ export default async function ParkingDetailPage({
 
   return (
     <>
-      {/* ✅ Breadcrumb JSON-LD */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
       />
-
-      {/* ✅ Parking JSON-LD */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(parkingLd) }}
       />
 
-      <main className="max-w-5xl mx-auto p-6 space-y-6">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold">{p.title}</h1>
-          <Link className="underline" href="/parkings">
-            ← Retour
-          </Link>
-        </div>
+      <main className={UI.page}>
+        <div className={[UI.container, UI.section].join(" ")}>
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className={UI.h1}>{p.title}</h1>
+              <p className={[UI.p, "mt-2"].join(" ")}>
+                {addr || "Adresse non renseignée"}
+              </p>
+            </div>
 
-        {Array.isArray(p.photos) && p.photos.length > 0 ? (
-          <section className="border rounded p-4">
-            <h2 className="font-semibold mb-3">Photos</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {p.photos.slice(0, 6).map((url) => (
-                <div key={url} className="border rounded overflow-hidden">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={url} alt="" className="w-full h-44 object-cover" />
+            <Link className={UI.link} href="/parkings">
+              ← Retour
+            </Link>
+          </div>
+
+          {/* Photos */}
+          {photos.length > 0 ? (
+            <section className={[UI.card, UI.cardPad, "mt-6"].join(" ")}>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className={UI.h2}>Photos</h2>
+                <span className={UI.chip}>{photos.length} photo(s)</span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {photos.slice(0, 6).map((url) => (
+                  <div
+                    key={url}
+                    className="rounded-2xl overflow-hidden border border-slate-200/70 bg-slate-50"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt="" className="w-full h-44 object-cover" />
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {/* Content grid */}
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left */}
+            <section className="lg:col-span-2 space-y-4">
+              <div className={[UI.card, UI.cardPad, "space-y-3"].join(" ")}>
+                <div className="text-sm text-slate-600">Adresse</div>
+                <div className="text-base text-slate-900">{addr}</div>
+
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Badge>{typeLabel(p.parking_type)}</Badge>
+                  <Badge>{p.is_covered ? "Couverte" : "Non couverte"}</Badge>
+                  {p.has_ev_charger ? <Badge>⚡ Borne EV</Badge> : null}
+                  {p.is_secure ? <Badge>🔒 Sécurisé</Badge> : null}
+                  {p.is_lit ? <Badge>💡 Éclairé</Badge> : null}
                 </div>
-              ))}
-            </div>
-          </section>
-        ) : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <section className="lg:col-span-2 space-y-4">
-            <div className="border rounded p-4 space-y-3">
-              <div className="text-sm text-gray-600">Adresse</div>
-              <div className="text-base">{fullAddress(p)}</div>
-
-              <div className="flex flex-wrap gap-2 pt-2">
-                <Badge>{typeLabel(p.parking_type)}</Badge>
-                {p.is_covered ? <Badge>Couvert</Badge> : <Badge>Non couvert</Badge>}
-                {p.has_ev_charger ? <Badge>⚡ Borne EV</Badge> : null}
-                {p.is_secure ? <Badge>🔒 Sécurisé</Badge> : null}
-                {p.is_lit ? <Badge>💡 Éclairé</Badge> : null}
+                <div className="pt-3 text-sm text-slate-700">
+                  <span className="font-medium text-slate-900">Prix :</span>{" "}
+                  {p.price_hour} CHF / h
+                  {p.price_day ? ` · ${p.price_day} CHF / jour` : ""}
+                </div>
               </div>
 
-              <div className="pt-3 text-sm">
-                <span className="font-medium">Prix :</span> {p.price_hour} CHF / h
-                {p.price_day ? ` · ${p.price_day} CHF / jour` : ""}
-              </div>
-            </div>
+              {p.instructions ? (
+                <div className={[UI.card, UI.cardPad].join(" ")}>
+                  <h2 className={UI.h2}>Instructions</h2>
+                  <p className={[UI.p, "mt-2 whitespace-pre-wrap"].join(" ")}>
+                    {p.instructions}
+                  </p>
+                </div>
+              ) : null}
+            </section>
 
-            {p.instructions ? (
-              <div className="border rounded p-4">
-                <h2 className="font-semibold">Instructions</h2>
-                <p className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
-                  {p.instructions}
-                </p>
-              </div>
-            ) : null}
-          </section>
+            {/* Right */}
+            <aside className={[UI.card, UI.cardPad, "space-y-3 h-fit"].join(" ")}>
+              <h2 className={UI.h2}>Réserver</h2>
+              <p className={UI.p}>Choisis une date/heure, puis paie pour confirmer.</p>
 
-          <aside className="border rounded p-4 space-y-3 h-fit">
-            <h2 className="text-lg font-semibold">Réserver</h2>
-            <p className="text-sm text-gray-600">
-              Choisis une date/heure, puis paie pour confirmer.
-            </p>
-
-            <BookingForm
-              parkingId={p.id}
-              parkingTitle={p.title}
-              priceHour={Number(p.price_hour)}
-              priceDay={p.price_day ? Number(p.price_day) : null}
-            />
-          </aside>
+              <BookingForm
+                parkingId={p.id}
+                parkingTitle={p.title}
+                priceHour={Number(p.price_hour)}
+                priceDay={p.price_day ? Number(p.price_day) : null}
+              />
+            </aside>
+          </div>
         </div>
       </main>
     </>

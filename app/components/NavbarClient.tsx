@@ -11,7 +11,6 @@ export default function NavbarClient() {
   const [open, setOpen] = useState(false);
 
   const pathname = usePathname();
-
   const email = useMemo(() => session?.user?.email ?? null, [session]);
 
   const isActive = (href: string) =>
@@ -34,28 +33,26 @@ export default function NavbarClient() {
       className={[
         "sticky top-0 z-50",
         "border-b border-slate-200/70",
-        "bg-white/70 backdrop-blur",
+        "bg-white/70 backdrop-blur-xl",
         "shadow-sm",
         "relative",
-        // Halo violet premium
+
+        // halo violet premium
         "before:absolute before:inset-x-0 before:top-0 before:h-16",
-        "before:bg-gradient-to-r before:from-violet-200/55 before:via-white/25 before:to-violet-200/55",
+        "before:bg-gradient-to-r before:from-violet-200/60 before:via-white/30 before:to-violet-200/60",
         "before:pointer-events-none before:-z-10",
-        // fine line accent
+
+        // fine accent line
         "after:absolute after:inset-x-0 after:bottom-0 after:h-px",
         "after:bg-gradient-to-r after:from-transparent after:via-violet-300/60 after:to-transparent",
       ].join(" ")}
     >
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Left */}
         <div className="flex items-center gap-3">
           <Link
             href="/"
-            className={[
-              "font-semibold tracking-tight text-slate-900",
-              "px-2 py-1 rounded-xl",
-              "hover:bg-white/60 transition",
-            ].join(" ")}
+            className="font-semibold tracking-tight text-slate-900 px-2 py-1 rounded-xl hover:bg-white/60 transition"
             onClick={() => setOpen(false)}
           >
             Parkeo
@@ -93,7 +90,7 @@ export default function NavbarClient() {
               <button
                 type="button"
                 className={btnGhostPill}
-                onClick={() => signOut()}
+                onClick={signOut}
               >
                 Se déconnecter
               </button>
@@ -118,34 +115,18 @@ export default function NavbarClient() {
       </div>
 
       {open && (
-        <div className="md:hidden border-t border-slate-200/70 bg-white/80 backdrop-blur">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 space-y-2">
-            <Link
-              className={navClass("/map")}
-              href="/map"
-              onClick={() => setOpen(false)}
-            >
+        <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
+          <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
+            <Link className={navClass("/map")} href="/map" onClick={() => setOpen(false)}>
               Carte
             </Link>
-            <Link
-              className={navClass("/parkings")}
-              href="/parkings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/parkings")} href="/parkings" onClick={() => setOpen(false)}>
               Parkings
             </Link>
-            <Link
-              className={navClass("/my-bookings")}
-              href="/my-bookings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/my-bookings")} href="/my-bookings" onClick={() => setOpen(false)}>
               Réservations
             </Link>
-            <Link
-              className={navClass("/my-parkings")}
-              href="/my-parkings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/my-parkings")} href="/my-parkings" onClick={() => setOpen(false)}>
               Mes places
             </Link>
 
@@ -177,11 +158,7 @@ export default function NavbarClient() {
                   </button>
                 </>
               ) : (
-                <Link
-                  href="/login"
-                  className={btnGhostPill}
-                  onClick={() => setOpen(false)}
-                >
+                <Link href="/login" className={btnGhostPill} onClick={() => setOpen(false)}>
                   Se connecter
                 </Link>
               )}

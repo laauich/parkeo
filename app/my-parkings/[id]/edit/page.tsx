@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import EditParkingClient from "./edit-client";
 
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

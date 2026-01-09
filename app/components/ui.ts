@@ -1,67 +1,131 @@
+// app/components/ui.ts
 export const UI = {
-  // Layout
-  page: "min-h-[calc(100vh-64px)] bg-gradient-to-b from-violet-200 via-white to-white",
-  container: "max-w-6xl mx-auto px-4 sm:px-6",
-  section: "py-8 sm:py-10",
-  sectionTitleRow: "flex items-center justify-between gap-4",
+  /* =========================
+     Layout
+  ========================= */
 
-  // Typography
-  h1: "text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900",
-  h2: "text-xl sm:text-2xl font-semibold tracking-tight text-slate-900",
+  // Page = fond global (prend toute la largeur + toute la hauteur sous la navbar)
+  page:
+    "min-h-[calc(100vh-64px)] w-full " +
+    "bg-gradient-to-b from-violet-200/80 via-white to-white",
+
+  /**
+   * Container FULL WIDTH :
+   * - occupe 100% de la largeur
+   * - padding responsive
+   * (Si tu veux un max-width plus tard, on remet max-w-7xl ou max-w-[1400px])
+   */
+  container: "w-full px-4 sm:px-6 lg:px-8",
+
+  section: "py-8 sm:py-10 lg:py-12",
+  sectionTitleRow:
+    "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3",
+
+  /* =========================
+     Typography
+  ========================= */
+
+  h1:
+    "text-3xl sm:text-4xl lg:text-5xl " +
+    "font-semibold tracking-tight text-slate-900",
+
+  h2:
+    "text-xl sm:text-2xl lg:text-3xl " +
+    "font-semibold tracking-tight text-slate-900",
+
   p: "text-sm sm:text-base text-slate-600 leading-relaxed",
   subtle: "text-xs text-slate-500",
 
-  // Surfaces
+  /* =========================
+     Surfaces
+  ========================= */
+
   card:
-    "bg-white/80 backdrop-blur border border-slate-200/70 shadow-sm rounded-2xl",
-  cardPad: "p-5 sm:p-6",
+    "bg-white/85 backdrop-blur " +
+    "border border-slate-200/70 " +
+    "shadow-sm rounded-2xl",
+
+  cardPad: "p-5 sm:p-6 lg:p-7",
+
   cardHover:
-    "transition hover:shadow-md hover:border-slate-300/70 hover:bg-white",
+    "transition " +
+    "hover:shadow-md hover:-translate-y-[1px] " +
+    "hover:border-slate-300/70 hover:bg-white",
+
   divider: "border-t border-slate-200/70",
 
-  // Buttons (UNIFORMISÉS)
+  /* =========================
+     Buttons
+  ========================= */
+
   btnBase:
-    "inline-flex items-center justify-center gap-2 font-medium transition " +
-    "rounded-xl px-4 py-2.5 text-sm " +
+    "inline-flex items-center justify-center gap-2 " +
+    "font-medium transition " +
+    "rounded-xl px-5 py-2.5 text-sm " +
     "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
 
-  // Primary = violet premium
+  // Primary (violet premium)
   btnPrimary:
-    "bg-violet-600 text-white hover:bg-violet-700 " +
-    "focus-visible:ring-violet-300 disabled:bg-violet-300 disabled:cursor-not-allowed",
+    "bg-violet-600 text-white " +
+    "hover:bg-violet-700 " +
+    "focus-visible:ring-violet-300 " +
+    "disabled:bg-violet-300 disabled:cursor-not-allowed",
 
-  // Secondary = noir premium (optionnel)
+  // Secondary (dark)
   btnSecondary:
-    "bg-slate-900 text-white hover:bg-slate-800 " +
-    "focus-visible:ring-slate-400 disabled:bg-slate-400 disabled:cursor-not-allowed",
+    "bg-slate-900 text-white " +
+    "hover:bg-slate-800 " +
+    "focus-visible:ring-slate-400 " +
+    "disabled:bg-slate-400 disabled:cursor-not-allowed",
 
-  // Ghost = blanc bordé (propre)
+  // Ghost
   btnGhost:
-    "bg-white text-slate-900 border border-slate-200 hover:bg-slate-50 " +
-    "focus-visible:ring-slate-300 disabled:opacity-60 disabled:cursor-not-allowed",
+    "bg-white/80 text-slate-900 " +
+    "border border-slate-200 " +
+    "hover:bg-slate-50 " +
+    "focus-visible:ring-slate-300 " +
+    "disabled:opacity-60 disabled:cursor-not-allowed",
 
-  // Danger = rose
+  // Danger
   btnDanger:
-    "bg-rose-600 text-white hover:bg-rose-700 " +
-    "focus-visible:ring-rose-300 disabled:bg-rose-300 disabled:cursor-not-allowed",
+    "bg-rose-600 text-white " +
+    "hover:bg-rose-700 " +
+    "focus-visible:ring-rose-300 " +
+    "disabled:bg-rose-300 disabled:cursor-not-allowed",
 
-  // Links & nav
-  link: "text-violet-700 hover:text-violet-800 underline underline-offset-4",
+  /* =========================
+     Links & Nav
+  ========================= */
+
+  link:
+    "text-violet-700 hover:text-violet-800 " +
+    "underline underline-offset-4 transition",
+
   navLink:
-    "text-sm text-slate-700 hover:text-slate-900 transition " +
-    "px-2 py-1 rounded-lg hover:bg-slate-100",
+    "text-sm text-slate-700 " +
+    "transition px-2.5 py-1.5 rounded-xl " +
+    "hover:text-slate-900 hover:bg-slate-100",
 
-  // Chips
+  /* =========================
+     Chips
+  ========================= */
+
   chip:
     "inline-flex items-center gap-1 rounded-full " +
     "border border-slate-200 bg-slate-50 " +
     "px-2.5 py-1 text-xs text-slate-700",
 
-  // Inputs
+  /* =========================
+     Inputs
+  ========================= */
+
   input:
-    "w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm " +
-    "outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300",
+    "w-full rounded-xl border border-slate-200 bg-white " +
+    "px-4 py-3 text-sm outline-none " +
+    "focus:ring-2 focus:ring-violet-200 focus:border-violet-300",
+
   select:
-    "w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm " +
-    "outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-300",
+    "w-full rounded-xl border border-slate-200 bg-white " +
+    "px-3 py-3 text-sm outline-none " +
+    "focus:ring-2 focus:ring-violet-200 focus:border-violet-300",
 };

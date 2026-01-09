@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import { UI } from "@/app/components/ui";
@@ -5,7 +6,7 @@ import { UI } from "@/app/components/ui";
 /* =========================
    SEO METADATA (HOME)
 ========================= */
-export const metadata = {
+export const metadata: Metadata = {
   title: "Parking à Genève – Réservez une place en ligne | Parkeo",
   description:
     "Trouvez et réservez une place de parking à Genève. Location à l’heure ou à la journée, particuliers et professionnels. Carte interactive, réservation rapide, paiement sécurisé.",
@@ -18,6 +19,12 @@ export const metadata = {
     siteName: "Parkeo",
     locale: "fr_CH",
     type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Parking à Genève – Parkeo",
+    description:
+      "Réservation de places de parking à Genève. Carte interactive, réservation rapide, paiement sécurisé.",
   },
 };
 
