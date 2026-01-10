@@ -32,10 +32,26 @@ export default function GalleryClient({ photos }: { photos: string[] }) {
   const canPrev = idx > 0;
   const canNext = idx < safe.length - 1;
 
+  const navBtn = (disabled: boolean) =>
+    [
+      UI.btnBase,
+      UI.btnGhost,
+      "rounded-full",
+      "px-3 py-2",
+      "bg-white/80 backdrop-blur",
+      "shadow-sm",
+      disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-white",
+    ].join(" ");
+
   return (
     <div className="space-y-4">
       {/* Main image */}
-      <div className={[UI.card, "overflow-hidden"].join(" ")}>
+      <div
+        className={[
+          "overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50",
+          "shadow-sm",
+        ].join(" ")}
+      >
         <div className="relative">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -52,7 +68,7 @@ export default function GalleryClient({ photos }: { photos: string[] }) {
             </span>
           </div>
 
-          {/* Prev/Next (mobile friendly) */}
+          {/* Prev/Next */}
           {safe.length > 1 ? (
             <>
               <button
@@ -62,11 +78,7 @@ export default function GalleryClient({ photos }: { photos: string[] }) {
                 aria-label="Photo précédente"
                 className={[
                   "absolute left-3 top-1/2 -translate-y-1/2",
-                  UI.btnBase,
-                  UI.btnGhost,
-                  "rounded-full px-3 py-2",
-                  "bg-white/80 backdrop-blur",
-                  !canPrev ? "opacity-50 cursor-not-allowed" : "",
+                  navBtn(!canPrev),
                 ].join(" ")}
               >
                 ←
@@ -81,11 +93,7 @@ export default function GalleryClient({ photos }: { photos: string[] }) {
                 aria-label="Photo suivante"
                 className={[
                   "absolute right-3 top-1/2 -translate-y-1/2",
-                  UI.btnBase,
-                  UI.btnGhost,
-                  "rounded-full px-3 py-2",
-                  "bg-white/80 backdrop-blur",
-                  !canNext ? "opacity-50 cursor-not-allowed" : "",
+                  navBtn(!canNext),
                 ].join(" ")}
               >
                 →
@@ -108,8 +116,9 @@ export default function GalleryClient({ photos }: { photos: string[] }) {
                 onClick={() => setActive(i)}
                 aria-label={`Photo ${i + 1}`}
                 className={[
-                  "shrink-0 overflow-hidden rounded-2xl border transition",
+                  "shrink-0 overflow-hidden rounded-2xl border",
                   "bg-white/70 backdrop-blur",
+                  "transition",
                   isActive
                     ? "border-violet-300 ring-2 ring-violet-300"
                     : "border-slate-200/70 hover:border-slate-300/70 hover:shadow-sm",
@@ -126,6 +135,13 @@ export default function GalleryClient({ photos }: { photos: string[] }) {
               </button>
             );
           })}
+
+          <div className="flex-1" />
+
+          {/* Counter chip bottom (cohérent mobile) */}
+          <span className={UI.chip}>
+            {idx + 1}/{safe.length}
+          </span>
         </div>
       ) : null}
     </div>

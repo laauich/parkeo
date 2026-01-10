@@ -413,9 +413,21 @@ export default function ParkingsClient({
                     </div>
 
                     <div className="mt-4 flex items-center justify-between">
-                      <span className="text-xs text-slate-500">Voir détails →</span>
-                      <span className={UI.chip}>Disponible</span>
-                    </div>
+  <span className={UI.chip}>Disponible</span>
+
+  <span
+    className={[
+      UI.btnBase,
+      UI.btnPrimary,
+      "px-3 py-1.5 text-xs",
+      "rounded-full",
+      "pointer-events-none", // important car la card entière est cliquable
+    ].join(" ")}
+  >
+    Détails
+  </span>
+</div>
+
                   </div>
                 </Link>
               );
