@@ -4,6 +4,7 @@ import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import BookingForm from "./booking-form";
 import { UI } from "@/app/components/ui";
+import GalleryClient from "./gallery-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ type ParkingRow = {
   title: string;
   instructions: string | null;
 
-  address: string;
+  address: string | null;
 
   street: string | null;
   street_number: string | null;
@@ -137,7 +138,6 @@ export async function generateMetadata({
 }
 
 function Badge({ children }: { children: React.ReactNode }) {
-  // ✅ harmonisé avec ton design
   return <span className={UI.chip}>{children}</span>;
 }
 
@@ -157,7 +157,7 @@ export default async function ParkingDetailPage({
       <main className={UI.page}>
         <div className={[UI.container, UI.section].join(" ")}>
           <div className={[UI.card, UI.cardPad, "space-y-3"].join(" ")}>
-            <p className="text-sm text-rose-600 font-medium">Parking introuvable.</p>
+            <p className="text-sm text-rose-700 font-medium">Parking introuvable.</p>
             <Link className={UI.link} href="/parkings">
               ← Retour aux parkings
             </Link>
@@ -172,6 +172,7 @@ export default async function ParkingDetailPage({
   const photos = Array.isArray(p.photos) ? p.photos.filter(Boolean) : [];
   const city = p.city ?? "Genève";
 
+  // ✅ BreadcrumbList JSON-LD
   const breadcrumbLd = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
@@ -182,6 +183,7 @@ export default async function ParkingDetailPage({
     ],
   };
 
+  // ✅ Parking detail JSON-LD (ParkingFacility + Offer)
   const parkingLd = {
     "@context": "https://schema.org",
     "@type": "ParkingFacility",
@@ -230,6 +232,7 @@ export default async function ParkingDetailPage({
 
   return (
     <>
+      {/* JSON-LD */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
@@ -241,59 +244,58 @@ export default async function ParkingDetailPage({
 
       <main className={UI.page}>
         <div className={[UI.container, UI.section].join(" ")}>
-          {/* Header */}
-          <div className="flex items-start justify-between gap-3">
+          {/* Top bar */}
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
             <div className="min-w-0">
               <h1 className={UI.h1}>{p.title}</h1>
               <p className={[UI.p, "mt-2"].join(" ")}>
                 {addr || "Adresse non renseignée"}
               </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Badge>{typeLabel(p.parking_type)}</Badge>
+                <Badge>{p.is_covered ? "Couverte" : "Non couverte"}</Badge>
+                {p.has_ev_charger ? <Badge>⚡ Borne EV</Badge> : null}
+                {p.is_secure ? <Badge>🔒 Sécurisé</Badge> : null}
+                {p.is_lit ? <Badge>💡 Éclairé</Badge> : null}
+              </div>
             </div>
 
-            <Link className={UI.link} href="/parkings">
-              ← Retour
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/parkings" className={[UI.btnBase, UI.btnGhost].join(" ")}>
+                ← Retour
+              </Link>
+              <Link href="/map" className={[UI.btnBase, UI.btnGhost].join(" ")}>
+                Vue carte
+              </Link>
+            </div>
           </div>
 
-          {/* Photos */}
-          {photos.length > 0 ? (
-            <section className={[UI.card, UI.cardPad, "mt-6"].join(" ")}>
+          {/* Gallery */}
+          <section className="mt-6">
+            <div className={[UI.card, UI.cardPad].join(" ")}>
               <div className="flex items-center justify-between gap-3">
                 <h2 className={UI.h2}>Photos</h2>
-                <span className={UI.chip}>{photos.length} photo(s)</span>
+                <span className={UI.chip}>
+                  {photos.length ? `${photos.length} photo(s)` : "Aucune"}
+                </span>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                {photos.slice(0, 6).map((url) => (
-                  <div
-                    key={url}
-                    className="rounded-2xl overflow-hidden border border-slate-200/70 bg-slate-50"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt="" className="w-full h-44 object-cover" />
-                  </div>
-                ))}
+              <div className="mt-4">
+                <GalleryClient photos={photos} />
               </div>
-            </section>
-          ) : null}
+            </div>
+          </section>
 
-          {/* Content grid */}
+          {/* Grid content */}
           <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left */}
+            {/* Left column */}
             <section className="lg:col-span-2 space-y-4">
               <div className={[UI.card, UI.cardPad, "space-y-3"].join(" ")}>
                 <div className="text-sm text-slate-600">Adresse</div>
                 <div className="text-base text-slate-900">{addr}</div>
 
-                <div className="flex flex-wrap gap-2 pt-2">
-                  <Badge>{typeLabel(p.parking_type)}</Badge>
-                  <Badge>{p.is_covered ? "Couverte" : "Non couverte"}</Badge>
-                  {p.has_ev_charger ? <Badge>⚡ Borne EV</Badge> : null}
-                  {p.is_secure ? <Badge>🔒 Sécurisé</Badge> : null}
-                  {p.is_lit ? <Badge>💡 Éclairé</Badge> : null}
-                </div>
-
-                <div className="pt-3 text-sm text-slate-700">
+                <div className="pt-2 text-sm text-slate-700">
                   <span className="font-medium text-slate-900">Prix :</span>{" "}
                   {p.price_hour} CHF / h
                   {p.price_day ? ` · ${p.price_day} CHF / jour` : ""}
@@ -310,7 +312,7 @@ export default async function ParkingDetailPage({
               ) : null}
             </section>
 
-            {/* Right */}
+            {/* Right column */}
             <aside className={[UI.card, UI.cardPad, "space-y-3 h-fit"].join(" ")}>
               <h2 className={UI.h2}>Réserver</h2>
               <p className={UI.p}>Choisis une date/heure, puis paie pour confirmer.</p>

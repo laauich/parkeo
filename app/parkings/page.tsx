@@ -1,7 +1,7 @@
 // app/parkings/page.tsx
 import type { Metadata } from "next";
 import { createClient } from "@supabase/supabase-js";
-import ParkingsClient from "./ParkingsClient";
+import ParkingsClient, { type ParkingRow } from "./ParkingsClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,20 +33,14 @@ type ParkingLite = {
 
 export default async function ParkingsPage() {
   const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    "https://parkeo.ch";
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.ch";
 
   // ✅ BreadcrumbList JSON-LD
   const breadcrumbLd = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     itemListElement: [
-      {
-        "@type": "ListItem",
-        position: 1,
-        name: "Accueil",
-        item: `${siteUrl}/`,
-      },
+      { "@type": "ListItem", position: 1, name: "Accueil", item: `${siteUrl}/` },
       {
         "@type": "ListItem",
         position: 2,
@@ -56,31 +50,45 @@ export default async function ParkingsPage() {
     ],
   };
 
-  // ✅ Fetch server-side (pour ItemList JSON-LD)
+  // ✅ Fetch server-side (pour ItemList JSON-LD + SSR initialRows)
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
+  // On prend un dataset “suffisant” pour SSR + SEO; le client fera le refresh complet ensuite.
   const { data } = await supabase
     .from("parkings")
-    .select("id,title,address,city,price_hour,price_day,photos,is_active")
+    .select(
+      "id,title,street,street_number,postal_code,city,address,price_hour,price_day,parking_type,is_covered,has_ev_charger,is_secure,is_lit,photos,is_active"
+    )
     .eq("is_active", true)
     .order("created_at", { ascending: false })
-    .limit(24);
+    .limit(48);
 
-  const rows = (data ?? []) as ParkingLite[];
+  const initialRows = (data ?? []) as unknown as ParkingRow[];
 
-  // ✅ ItemList JSON-LD (liste d’annonces)
+  // ✅ ItemList JSON-LD (liste d’annonces) — version “lite” pour SEO
+  const liteRows: ParkingLite[] = initialRows.map((p) => ({
+    id: p.id,
+    title: p.title,
+    address: p.address ?? null,
+    city: p.city ?? null,
+    price_hour: p.price_hour ?? null,
+    price_day: p.price_day ?? null,
+    photos: Array.isArray(p.photos) ? p.photos : null,
+    is_active: p.is_active ?? null,
+  }));
+
   const itemListLd =
-    rows.length > 0
+    liteRows.length > 0
       ? {
           "@context": "https://schema.org",
           "@type": "ItemList",
           name: "Places de parking disponibles à Genève",
           itemListOrder: "https://schema.org/ItemListOrderDescending",
-          numberOfItems: rows.length,
-          itemListElement: rows.map((p, idx) => {
+          numberOfItems: liteRows.length,
+          itemListElement: liteRows.map((p, idx) => {
             const url = `${siteUrl}/parkings/${p.id}`;
             const img = Array.isArray(p.photos) ? p.photos.filter(Boolean) : [];
             const locality = p.city ?? "Genève";
@@ -151,7 +159,8 @@ export default async function ParkingsPage() {
         />
       ) : null}
 
-      <ParkingsClient />
+      {/* ✅ SSR initialRows + refresh client pour rester à jour */}
+      <ParkingsClient initialRows={initialRows} />
     </>
   );
 }

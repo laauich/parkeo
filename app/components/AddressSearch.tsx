@@ -1,3 +1,4 @@
+// app/components/AddressSearch.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,11 +20,6 @@ type Props = {
   onPick: (p: PickPayload) => void;
   placeholder?: string;
   className?: string;
-
-  /**
-   * ✅ Optionnel (nouvelle API)
-   * Si fourni, AddressSearch devient "controlled".
-   */
   query?: string;
   onQueryChange?: (v: string) => void;
 };
@@ -42,7 +38,6 @@ export default function AddressSearch({
   query,
   onQueryChange,
 }: Props) {
-  // ✅ support controlled/uncontrolled
   const isControlled = typeof query === "string" && typeof onQueryChange === "function";
 
   const [internalQuery, setInternalQuery] = useState<string>("");
@@ -73,20 +68,11 @@ export default function AddressSearch({
       if (abortRef.current) abortRef.current.abort();
       abortRef.current = new AbortController();
 
-      // Nominatim (OpenStreetMap) — gratuit
-      // Tip: on restreint à la Suisse / Genève peut être trop strict, donc on reste souple.
       const url =
         "https://nominatim.openstreetmap.org/search" +
         `?format=json&addressdetails=1&limit=6&q=${encodeURIComponent(text)}`;
 
-      const res = await fetch(url, {
-        signal: abortRef.current.signal,
-        headers: {
-          // Nominatim recommande un User-Agent clair ; côté browser on ne peut pas toujours le fixer,
-          // donc on reste simple. (Ça marche généralement en dev/prod.)
-        },
-      });
-
+      const res = await fetch(url, { signal: abortRef.current.signal });
       const json = (await res.json().catch(() => [])) as NominatimItem[];
 
       if (!res.ok) {
@@ -96,10 +82,7 @@ export default function AddressSearch({
         return;
       }
 
-      const mapped = (json ?? [])
-        .map(toPickPayload)
-        .filter(Boolean) as PickPayload[];
-
+      const mapped = (json ?? []).map(toPickPayload).filter(Boolean) as PickPayload[];
       setItems(mapped);
       setOpen(true);
       setLoading(false);
@@ -144,7 +127,6 @@ export default function AddressSearch({
             if (items.length > 0) setOpen(true);
           }}
           onBlur={() => {
-            // petit délai pour laisser le click sur une suggestion
             window.setTimeout(() => setOpen(false), 120);
           }}
         />
@@ -156,15 +138,21 @@ export default function AddressSearch({
         ) : null}
       </div>
 
-      {error ? <p className="mt-2 text-sm text-rose-700">Erreur : {error}</p> : null}
+      {error ? (
+        <div className="mt-2 rounded-2xl border border-rose-200 bg-rose-50/60 p-3">
+          <p className="text-sm text-rose-700">
+            <b>Erreur :</b> {error}
+          </p>
+        </div>
+      ) : null}
 
       {open && items.length > 0 ? (
-        <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="mt-2 space-y-2">
           {items.map((it) => (
             <button
               key={`${it.lat}-${it.lng}-${it.displayName}`}
               type="button"
-              className="w-full text-left px-4 py-3 text-sm hover:bg-slate-50"
+              className={`${UI.card} ${UI.cardHover} w-full text-left ${UI.cardPad}`}
               onMouseDown={(e) => e.preventDefault()} // évite blur avant click
               onClick={() => {
                 onPick(it);
@@ -172,7 +160,7 @@ export default function AddressSearch({
               }}
             >
               <div className="font-medium text-slate-900">📍 {it.displayName}</div>
-              <div className="text-xs text-slate-500">
+              <div className={UI.subtle}>
                 {it.lat.toFixed(5)} · {it.lng.toFixed(5)}
               </div>
             </button>
@@ -181,11 +169,11 @@ export default function AddressSearch({
       ) : null}
 
       {!loading && open && items.length === 0 && canSearch ? (
-        <p className="mt-2 text-sm text-slate-600">Aucun résultat.</p>
+        <p className={[UI.p, "mt-2"].join(" ")}>Aucun résultat.</p>
       ) : null}
 
-      <p className="mt-2 text-xs text-slate-500">
-        Astuce : tape au moins 3 caractères (ex: “Rue du Rhône 12, Genève”).
+      <p className={[UI.subtle, "mt-2"].join(" ")}>
+        Astuce : tape au moins 3 caractères (ex : “Rue du Rhône 12, Genève”).
       </p>
     </div>
   );

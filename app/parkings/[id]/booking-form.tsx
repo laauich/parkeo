@@ -15,10 +15,13 @@ type AvailApiOk = { available: boolean };
 type AvailApiErr = { error?: string; detail?: string };
 
 function toIsoFromLocal(v: string) {
-  // datetime-local => string local, on convertit en Date puis ISO
   const t = Date.parse(v);
   if (Number.isNaN(t)) return null;
   return new Date(t).toISOString();
+}
+
+function cx(...s: Array<string | false | null | undefined>) {
+  return s.filter(Boolean).join(" ");
 }
 
 export default function BookingForm({
@@ -44,7 +47,6 @@ export default function BookingForm({
     state: "idle",
   });
 
-  // internals
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<number | null>(null);
 
@@ -72,14 +74,11 @@ export default function BookingForm({
     return h * priceHour;
   }, [parsed, priceHour, priceDay]);
 
-  // ✅ On calcule la prochaine availability dans l’effet SANS setState sync.
   useEffect(() => {
-    // cleanup timers/requests
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     if (abortRef.current) abortRef.current.abort();
 
     if (!parsed.valid) {
-      // planifie l’état idle (évite setState direct dans l’effet)
       queueMicrotask(() => setAvailability({ state: "idle" }));
       return;
     }
@@ -98,7 +97,9 @@ export default function BookingForm({
         )}&start=${encodeURIComponent(sIso)}&end=${encodeURIComponent(eIso)}`;
 
         const res = await fetch(url, { signal: abortRef.current.signal });
-        const json: AvailApiOk | AvailApiErr = await res.json().catch(() => ({}));
+        const json: AvailApiOk | AvailApiErr = await res
+          .json()
+          .catch(() => ({}));
 
         if (!res.ok) {
           const msg =
@@ -147,7 +148,7 @@ export default function BookingForm({
     setLoading(true);
 
     try {
-      // 1) create booking (server) – nécessite Bearer token
+      // 1) create booking (server)
       const res1 = await fetch("/api/bookings/create", {
         method: "POST",
         headers: {
@@ -166,7 +167,10 @@ export default function BookingForm({
       const j1: unknown = await res1.json().catch(() => ({}));
       if (!res1.ok) {
         const msg =
-          typeof j1 === "object" && j1 && "error" in j1 && typeof (j1 as { error?: unknown }).error === "string"
+          typeof j1 === "object" &&
+          j1 &&
+          "error" in j1 &&
+          typeof (j1 as { error?: unknown }).error === "string"
             ? (j1 as { error: string }).error
             : `Erreur create booking (${res1.status})`;
         setError(msg);
@@ -201,7 +205,10 @@ export default function BookingForm({
       const j2: unknown = await res2.json().catch(() => ({}));
       if (!res2.ok) {
         const msg =
-          typeof j2 === "object" && j2 && "error" in j2 && typeof (j2 as { error?: unknown }).error === "string"
+          typeof j2 === "object" &&
+          j2 &&
+          "error" in j2 &&
+          typeof (j2 as { error?: unknown }).error === "string"
             ? (j2 as { error: string }).error
             : `Erreur Stripe checkout (${res2.status})`;
         setError(msg);
@@ -230,6 +237,17 @@ export default function BookingForm({
   const startIso = useMemo(() => toIsoFromLocal(start), [start]);
   const endIso = useMemo(() => toIsoFromLocal(end), [end]);
 
+  const statusLine =
+    availability.state === "checking"
+      ? { text: "Vérification disponibilité…", cls: "text-slate-600" }
+      : availability.state === "available"
+      ? { text: "✅ Disponible", cls: "font-medium text-emerald-700" }
+      : availability.state === "unavailable"
+      ? { text: "❌ Déjà réservé sur ce créneau", cls: "font-medium text-rose-700" }
+      : availability.state === "error"
+      ? { text: `Erreur disponibilité : ${availability.message}`, cls: "text-rose-700" }
+      : { text: "—", cls: "text-slate-500" };
+
   return (
     <form onSubmit={onPay} className="space-y-4">
       {/* Dates */}
@@ -244,7 +262,7 @@ export default function BookingForm({
               if (error) setError(null);
             }}
             required
-            className="w-full border rounded-2xl px-4 py-3 text-base bg-white shadow-sm"
+            className={UI.input}
           />
         </div>
 
@@ -258,65 +276,56 @@ export default function BookingForm({
               if (error) setError(null);
             }}
             required
-            className="w-full border rounded-2xl px-4 py-3 text-base bg-white shadow-sm"
+            className={UI.input}
           />
         </div>
       </div>
 
       {/* Résumé */}
-      <div className="rounded-2xl border bg-gradient-to-b from-violet-50 to-white p-4 space-y-2">
-        <div className="flex flex-wrap justify-between gap-2 text-sm">
-          <span className="text-slate-600">Estimation</span>
-          <span className="font-semibold text-slate-900">
-            {amountChf > 0 ? `${amountChf} CHF` : "—"}
-          </span>
+      <div className={cx(UI.card, UI.cardPad, "bg-gradient-to-b from-violet-50/80 to-white")}>
+        <div className="space-y-2">
+          <div className="flex flex-wrap justify-between gap-2 text-sm">
+            <span className="text-slate-600">Estimation</span>
+            <span className="font-semibold text-slate-900">
+              {amountChf > 0 ? `${amountChf} CHF` : "—"}
+            </span>
+          </div>
+
+          <div className="text-xs text-slate-500">
+            {priceDay
+              ? `Tarif : ${priceHour} CHF/h ou ${priceDay} CHF/j`
+              : `Tarif : ${priceHour} CHF/h`}
+          </div>
+
+          {parsed.valid ? (
+            <div className={cx("pt-2 text-sm", statusLine.cls)}>{statusLine.text}</div>
+          ) : null}
+
+          {/* Debug (optionnel) */}
+          {startIso && endIso ? (
+            <div className="text-[11px] text-slate-400">
+              {startIso} → {endIso}
+            </div>
+          ) : null}
+
+          {!session && ready ? (
+            <div className="text-xs text-slate-600 pt-1">
+              Connecte-toi pour payer et réserver.
+            </div>
+          ) : null}
+
+          {start && end && !parsed.valid ? (
+            <div className="text-xs text-rose-700 pt-1">
+              Dates invalides : la fin doit être après le début.
+            </div>
+          ) : null}
         </div>
-
-        <div className="text-xs text-slate-500">
-          {priceDay ? `Tarif : ${priceHour} CHF/h ou ${priceDay} CHF/j` : `Tarif : ${priceHour} CHF/h`}
-        </div>
-
-        {/* Disponibilité */}
-        {parsed.valid ? (
-          <div className="pt-2 text-sm">
-            {availability.state === "checking" ? (
-              <span className="text-slate-600">Vérification disponibilité…</span>
-            ) : availability.state === "available" ? (
-              <span className="font-medium text-emerald-700">✅ Disponible</span>
-            ) : availability.state === "unavailable" ? (
-              <span className="font-medium text-rose-700">❌ Déjà réservé sur ce créneau</span>
-            ) : availability.state === "error" ? (
-              <span className="text-rose-700">Erreur disponibilité : {availability.message}</span>
-            ) : (
-              <span className="text-slate-500">—</span>
-            )}
-          </div>
-        ) : null}
-
-        {/* Debug dates (optionnel, utile) */}
-        {startIso && endIso && (
-          <div className="text-[11px] text-slate-400">
-            {startIso} → {endIso}
-          </div>
-        )}
-
-        {!session && ready ? (
-          <div className="text-xs text-slate-600 pt-1">
-            Connecte-toi pour payer et réserver.
-          </div>
-        ) : null}
-
-        {start && end && !parsed.valid ? (
-          <div className="text-xs text-rose-700 pt-1">
-            Dates invalides : la fin doit être après le début.
-          </div>
-        ) : null}
       </div>
 
-      {/* CTA */}
+      {/* CTA (IMPORTANT: btnBase + btnPrimary) */}
       <button
         type="submit"
-        className={UI.btnPrimary}
+        className={cx(UI.btnBase, UI.btnPrimary, "w-full")}
         disabled={!canSubmit}
         title={
           !ready

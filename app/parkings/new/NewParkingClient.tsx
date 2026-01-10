@@ -1,3 +1,4 @@
+// app/parkings/new/NewParkingClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -250,7 +251,7 @@ export default function NewParkingClient() {
         </header>
 
         {error ? (
-          <div className={`${UI.card} ${UI.cardPad} border-rose-200 bg-rose-50/60`}>
+          <div className={`${UI.card} ${UI.cardPad} border border-rose-200 bg-rose-50/60`}>
             <p className="text-sm text-rose-700">
               <b>Erreur :</b> {error}
             </p>
@@ -279,7 +280,7 @@ export default function NewParkingClient() {
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-900">Instructions</label>
               <textarea
-                className={`${UI.input} min-h-[110px]`}
+                className={`${UI.input} min-h-[110px] resize-none leading-relaxed`}
                 rows={3}
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
@@ -295,7 +296,6 @@ export default function NewParkingClient() {
               <span className={UI.chip}>Étape 2/5</span>
             </div>
 
-            {/* Recherche */}
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-900">Recherche rapide</label>
               <AddressSearch
@@ -319,7 +319,6 @@ export default function NewParkingClient() {
 
             <div className={UI.divider} />
 
-            {/* Champs manuels */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-2 space-y-2">
                 <label className="text-sm font-medium text-slate-900">Rue</label>
@@ -409,30 +408,30 @@ export default function NewParkingClient() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <label className={UI.chip}>
+              <label className={`${UI.chip} cursor-pointer select-none`}>
                 <input
                   type="checkbox"
-                  className="mr-2"
+                  className="mr-2 accent-violet-600"
                   checked={hasEvCharger}
                   onChange={(e) => setHasEvCharger(e.target.checked)}
                 />
                 ⚡ Borne EV
               </label>
 
-              <label className={UI.chip}>
+              <label className={`${UI.chip} cursor-pointer select-none`}>
                 <input
                   type="checkbox"
-                  className="mr-2"
+                  className="mr-2 accent-violet-600"
                   checked={isSecure}
                   onChange={(e) => setIsSecure(e.target.checked)}
                 />
                 🔒 Sécurisé
               </label>
 
-              <label className={UI.chip}>
+              <label className={`${UI.chip} cursor-pointer select-none`}>
                 <input
                   type="checkbox"
-                  className="mr-2"
+                  className="mr-2 accent-violet-600"
                   checked={isLit}
                   onChange={(e) => setIsLit(e.target.checked)}
                 />
@@ -510,7 +509,7 @@ export default function NewParkingClient() {
                 </p>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-slate-200/70">
+              <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white/60 backdrop-blur">
                 <div className="h-[360px]">
                   <MapPicker value={pos} onChange={setPos} />
                 </div>
@@ -524,22 +523,25 @@ export default function NewParkingClient() {
           </section>
 
           {/* ===== Actions ===== */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
             <button
-              className={`${UI.btnBase} ${UI.btnPrimary}`}
+              className={`${UI.btnBase} ${UI.btnPrimary} w-full sm:w-auto`}
               disabled={saving}
               type="submit"
             >
               {saving ? "Création…" : "Créer la place"}
             </button>
 
-            <Link className={`${UI.btnBase} ${UI.btnGhost}`} href="/my-parkings">
+            <Link
+              className={`${UI.btnBase} ${UI.btnGhost} w-full sm:w-auto`}
+              href="/my-parkings"
+            >
               Mes places
             </Link>
 
             <button
               type="button"
-              className={`${UI.btnBase} ${UI.btnGhost}`}
+              className={`${UI.btnBase} ${UI.btnGhost} w-full sm:w-auto`}
               onClick={() => router.back()}
             >
               Retour

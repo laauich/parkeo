@@ -2,13 +2,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { UI } from "@/app/components/ui";
 
 type ParkingType = "outdoor" | "indoor" | "garage";
 
-type ParkingRow = {
+export type ParkingRow = {
   id: string;
   title: string;
   street: string | null;
@@ -49,10 +49,54 @@ function toTypeLabel(t: ParkingType | null) {
   return "Extérieur";
 }
 
-export default function ParkingsClient() {
-  const [rows, setRows] = useState<ParkingRow[]>([]);
+function normalizeRows(input: unknown): ParkingRow[] {
+  if (!Array.isArray(input)) return [];
+  return (input as ParkingRow[]).filter((x) => x && typeof x.id === "string");
+}
+
+function sameRow(a: ParkingRow, b: ParkingRow) {
+  // comparaison “cheap” suffisante pour éviter flicker
+  return (
+    a.id === b.id &&
+    a.title === b.title &&
+    a.address === b.address &&
+    a.street === b.street &&
+    a.street_number === b.street_number &&
+    a.postal_code === b.postal_code &&
+    a.city === b.city &&
+    a.price_hour === b.price_hour &&
+    a.price_day === b.price_day &&
+    a.parking_type === b.parking_type &&
+    a.is_covered === b.is_covered &&
+    a.has_ev_charger === b.has_ev_charger &&
+    a.is_secure === b.is_secure &&
+    a.is_lit === b.is_lit &&
+    JSON.stringify(a.photos ?? []) === JSON.stringify(b.photos ?? []) &&
+    a.is_active === b.is_active
+  );
+}
+
+function sameList(a: ParkingRow[], b: ParkingRow[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!sameRow(a[i]!, b[i]!)) return false;
+  }
+  return true;
+}
+
+export default function ParkingsClient({
+  initialRows,
+}: {
+  initialRows?: ParkingRow[];
+}) {
+  const [rows, setRows] = useState<ParkingRow[]>(
+    normalizeRows(initialRows) ?? []
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // “mis à jour”
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   // Filters
   const [q, setQ] = useState("");
@@ -62,8 +106,15 @@ export default function ParkingsClient() {
   const [lit, setLit] = useState(false);
   const [ev, setEv] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
+  // éviter double fetch en React StrictMode (dev)
+  const didMountRef = useRef(false);
+
+  const load = async (opts?: { silent?: boolean }) => {
+    const silent = !!opts?.silent;
+
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -78,17 +129,26 @@ export default function ParkingsClient() {
         .order("created_at", { ascending: false });
 
       if (error) throw new Error(error.message);
-      setRows((data ?? []) as ParkingRow[]);
-    } catch (e: unknown) {
-      setRows([]);
-      setError(e instanceof Error ? e.message : "Erreur inconnue");
-    }
 
-    setLoading(false);
+      const next = normalizeRows(data ?? []);
+      setRows((prev) => (sameList(prev, next) ? prev : next));
+      setLastUpdatedAt(Date.now());
+    } catch (e: unknown) {
+      // ⚠️ si on a déjà des rows (SSR), on garde l’UI et on affiche l’erreur
+      setError(e instanceof Error ? e.message : "Erreur inconnue");
+      setRows((prev) => prev); // no-op
+    } finally {
+      if (!silent) setLoading(false);
+    }
   };
 
   useEffect(() => {
-    void load();
+    if (didMountRef.current) return;
+    didMountRef.current = true;
+
+    // ✅ SWR-like : on affiche initialRows tout de suite puis on refresh en arrière-plan
+    void load({ silent: rows.length > 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
@@ -125,6 +185,14 @@ export default function ParkingsClient() {
     }
   };
 
+  const updatedLabel = useMemo(() => {
+    if (!lastUpdatedAt) return null;
+    const d = new Date(lastUpdatedAt);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `Mis à jour à ${hh}:${mm}`;
+  }, [lastUpdatedAt]);
+
   return (
     <main className={UI.page}>
       <div className={[UI.container, UI.section].join(" ")}>
@@ -136,6 +204,9 @@ export default function ParkingsClient() {
               Recherche par rue / ville + filtres utiles (couverte, sécurisée,
               éclairée…)
             </p>
+            {updatedLabel ? (
+              <p className={[UI.subtle, "mt-1"].join(" ")}>{updatedLabel}</p>
+            ) : null}
           </div>
 
           <div className="flex gap-2">
@@ -215,7 +286,9 @@ export default function ParkingsClient() {
 
             <button
               type="button"
-              className={[UI.btnBase, lit ? UI.btnPrimary : UI.btnGhost].join(" ")}
+              className={[UI.btnBase, lit ? UI.btnPrimary : UI.btnGhost].join(
+                " "
+              )}
               onClick={() => setLit((v) => !v)}
             >
               💡 Éclairée
@@ -249,7 +322,7 @@ export default function ParkingsClient() {
             <button
               type="button"
               className={[UI.btnBase, UI.btnGhost].join(" ")}
-              onClick={load}
+              onClick={() => void load()}
               disabled={loading}
             >
               {loading ? "Chargement…" : "Rafraîchir"}
@@ -257,13 +330,17 @@ export default function ParkingsClient() {
           </div>
         </section>
 
-        {error && <p className="mt-4 text-sm text-rose-600">Erreur : {error}</p>}
+        {error ? (
+          <p className="mt-4 text-sm text-rose-600">Erreur : {error}</p>
+        ) : null}
 
         {/* Results */}
         <section className="mt-6">
           <div className="flex items-center justify-between">
             <div className="text-sm text-slate-600">
-              {loading ? "Chargement…" : `${filtered.length} place(s) trouvée(s)`}
+              {loading && rows.length === 0
+                ? "Chargement…"
+                : `${filtered.length} place(s) trouvée(s)`}
             </div>
           </div>
 
@@ -322,13 +399,17 @@ export default function ParkingsClient() {
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
-                      <span className={UI.chip}>{toTypeLabel(p.parking_type)}</span>
+                      <span className={UI.chip}>
+                        {toTypeLabel(p.parking_type)}
+                      </span>
                       <span className={UI.chip}>
                         {p.is_covered ? "Couverte" : "Non couverte"}
                       </span>
                       {p.is_secure ? <span className={UI.chip}>🔒</span> : null}
                       {p.is_lit ? <span className={UI.chip}>💡</span> : null}
-                      {p.has_ev_charger ? <span className={UI.chip}>⚡ EV</span> : null}
+                      {p.has_ev_charger ? (
+                        <span className={UI.chip}>⚡ EV</span>
+                      ) : null}
                     </div>
 
                     <div className="mt-4 flex items-center justify-between">
@@ -340,14 +421,14 @@ export default function ParkingsClient() {
               );
             })}
 
-            {!loading && filtered.length === 0 && (
+            {!loading && filtered.length === 0 ? (
               <div className={[UI.card, UI.cardPad].join(" ")}>
                 <div className="font-semibold text-slate-900">Aucun résultat</div>
                 <p className={[UI.p, "mt-2"].join(" ")}>
                   Essaie de retirer des filtres ou d’élargir la recherche.
                 </p>
               </div>
-            )}
+            ) : null}
           </div>
         </section>
       </div>

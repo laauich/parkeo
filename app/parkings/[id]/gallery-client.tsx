@@ -1,47 +1,133 @@
+// app/parkings/[id]/gallery-client.tsx
 "use client";
 
 import { useMemo, useState } from "react";
+import { UI } from "@/app/components/ui";
 
 export default function GalleryClient({ photos }: { photos: string[] }) {
-  const safe = useMemo(() => (Array.isArray(photos) ? photos.filter(Boolean) : []), [photos]);
+  const safe = useMemo(
+    () => (Array.isArray(photos) ? photos.filter(Boolean) : []),
+    [photos]
+  );
+
   const [active, setActive] = useState(0);
 
   if (!safe.length) {
     return (
-      <div className="h-56 w-full bg-gray-100 rounded flex items-center justify-center text-sm text-gray-500">
-        Pas de photo
+      <div
+        className={[
+          UI.card,
+          UI.cardPad,
+          "h-56 w-full flex items-center justify-center",
+        ].join(" ")}
+      >
+        <p className={UI.p}>Pas de photo</p>
       </div>
     );
   }
 
-  const main = safe[Math.min(active, safe.length - 1)];
+  const idx = Math.min(active, safe.length - 1);
+  const main = safe[idx];
+
+  const canPrev = idx > 0;
+  const canNext = idx < safe.length - 1;
 
   return (
-    <div className="space-y-3">
-      <div className="border rounded overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={main} alt="Photo parking" className="w-full h-72 object-cover" />
+    <div className="space-y-4">
+      {/* Main image */}
+      <div className={[UI.card, "overflow-hidden"].join(" ")}>
+        <div className="relative">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={main}
+            alt={`Photo parking ${idx + 1}`}
+            className="w-full h-[260px] sm:h-[340px] object-cover"
+            loading="eager"
+          />
+
+          {/* Counter chip */}
+          <div className="absolute top-3 right-3">
+            <span className={UI.chip}>
+              {idx + 1}/{safe.length}
+            </span>
+          </div>
+
+          {/* Prev/Next (mobile friendly) */}
+          {safe.length > 1 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => canPrev && setActive((v) => Math.max(0, v - 1))}
+                disabled={!canPrev}
+                aria-label="Photo précédente"
+                className={[
+                  "absolute left-3 top-1/2 -translate-y-1/2",
+                  UI.btnBase,
+                  UI.btnGhost,
+                  "rounded-full px-3 py-2",
+                  "bg-white/80 backdrop-blur",
+                  !canPrev ? "opacity-50 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                ←
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  canNext && setActive((v) => Math.min(safe.length - 1, v + 1))
+                }
+                disabled={!canNext}
+                aria-label="Photo suivante"
+                className={[
+                  "absolute right-3 top-1/2 -translate-y-1/2",
+                  UI.btnBase,
+                  UI.btnGhost,
+                  "rounded-full px-3 py-2",
+                  "bg-white/80 backdrop-blur",
+                  !canNext ? "opacity-50 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                →
+              </button>
+            </>
+          ) : null}
+        </div>
       </div>
 
-      {safe.length > 1 && (
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {safe.map((u, idx) => (
-            <button
-              key={u + idx}
-              type="button"
-              onClick={() => setActive(idx)}
-              className={`border rounded overflow-hidden shrink-0 ${
-                idx === active ? "ring-2 ring-black" : ""
-              }`}
-              aria-label={`Photo ${idx + 1}`}
-              style={{ width: 96, height: 64 }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={u} alt="" className="w-full h-full object-cover" />
-            </button>
-          ))}
+      {/* Thumbnails */}
+      {safe.length > 1 ? (
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          {safe.map((u, i) => {
+            const isActive = i === idx;
+
+            return (
+              <button
+                key={`${u}-${i}`}
+                type="button"
+                onClick={() => setActive(i)}
+                aria-label={`Photo ${i + 1}`}
+                className={[
+                  "shrink-0 overflow-hidden rounded-2xl border transition",
+                  "bg-white/70 backdrop-blur",
+                  isActive
+                    ? "border-violet-300 ring-2 ring-violet-300"
+                    : "border-slate-200/70 hover:border-slate-300/70 hover:shadow-sm",
+                ].join(" ")}
+                style={{ width: 104, height: 72 }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={u}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+              </button>
+            );
+          })}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

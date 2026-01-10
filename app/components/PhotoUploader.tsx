@@ -1,11 +1,13 @@
+// app/components/PhotoUploader.tsx
 "use client";
 
 import { useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { UI } from "@/app/components/ui";
 
 type Props = {
   parkingId: string;
-  value?: string[] | null; // ✅ peut arriver undefined/null depuis edit-client
+  value?: string[] | null;
   onChange: (urls: string[]) => void;
   maxPhotos?: number; // défaut 3
 };
@@ -28,10 +30,9 @@ export default function PhotoUploader({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ✅ normalisation interne
-  const current = Array.isArray(value) ? value : [];
-
+  const current = Array.isArray(value) ? value.filter(Boolean) : [];
   const canUploadMore = current.length < maxPhotos;
+  const remaining = Math.max(0, maxPhotos - current.length);
 
   const upload = async (files: FileList | null) => {
     setError(null);
@@ -42,7 +43,6 @@ export default function PhotoUploader({
       return;
     }
 
-    // session requise (RLS)
     const { data: s } = await supabase.auth.getSession();
     const session = s.session;
     if (!session) {
@@ -50,10 +50,7 @@ export default function PhotoUploader({
       return;
     }
 
-    // limite maxPhotos
-    const remaining = Math.max(0, maxPhotos - current.length);
     const picked = Array.from(files).slice(0, remaining);
-
     if (picked.length === 0) {
       setError(`Limite atteinte (${maxPhotos} photos max).`);
       return;
@@ -80,7 +77,6 @@ export default function PhotoUploader({
           .toString(16)
           .slice(2)}-${base}.${ext}`;
 
-        // ✅ Chemin compatible RLS Storage : <userId>/<parkingId>/<file>
         const filePath = `${userId}/${parkingId}/${fileName}`;
 
         const { error: upErr } = await supabase.storage
@@ -92,7 +88,6 @@ export default function PhotoUploader({
 
         if (upErr) throw new Error(upErr.message);
 
-        // bucket public => URL publique
         const { data: pub } = supabase.storage
           .from("parkings")
           .getPublicUrl(filePath);
@@ -121,13 +116,12 @@ export default function PhotoUploader({
       const { data: s } = await supabase.auth.getSession();
       const session = s.session;
 
-      // On enlève de l’UI quoiqu’il arrive
+      // UI first
       onChange(current.filter((u) => u !== url));
 
-      // Best-effort: supprimer aussi dans Storage si connecté
+      // Best-effort storage delete
       if (!session) return;
 
-      // URL publique: .../storage/v1/object/public/parkings/<path>
       const marker = "/storage/v1/object/public/parkings/";
       const idx = url.indexOf(marker);
       const path = idx >= 0 ? url.slice(idx + marker.length) : null;
@@ -136,53 +130,88 @@ export default function PhotoUploader({
         await supabase.storage.from("parkings").remove([path]);
       }
     } catch {
-      // on garde juste la suppression UI
       onChange(current.filter((u) => u !== url));
     }
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="space-y-2">
-        <label className="text-sm font-medium">Photos (optionnel)</label>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-medium text-slate-900">Photos (optionnel)</div>
+            <p className={UI.subtle}>
+              Conseil : 1 à {maxPhotos} photo(s), bien cadrées, bonne lumière.
+            </p>
+          </div>
 
-        <input
-          type="file"
-          accept="image/*"
-          multiple
-          disabled={uploading || !canUploadMore}
-          onChange={(e) => upload(e.target.files)}
-        />
-
-        <div className="text-xs text-gray-500">
-          Conseil : 1 à {maxPhotos} photos, bien cadrées, bonne lumière.
-          {!canUploadMore ? " (limite atteinte)" : ""}
+          <span className={UI.chip}>
+            {current.length}/{maxPhotos}
+          </span>
         </div>
 
-        {uploading && <p className="text-sm text-gray-600">Upload en cours…</p>}
-        {error && <p className="text-sm text-red-600">Erreur : {error}</p>}
+        {/* Upload button (styled) */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label
+            className={[
+              UI.btnBase,
+              canUploadMore ? UI.btnGhost : "opacity-60 cursor-not-allowed",
+              uploading ? "pointer-events-none" : "",
+              "relative overflow-hidden",
+            ].join(" ")}
+            title={!canUploadMore ? "Limite atteinte" : ""}
+          >
+            {uploading ? "Upload…" : canUploadMore ? `Ajouter (${remaining} restant)` : "Limite atteinte"}
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={uploading || !canUploadMore}
+              onChange={(e) => upload(e.target.files)}
+              className="absolute inset-0 opacity-0 cursor-pointer"
+            />
+          </label>
+
+          {uploading ? <span className={UI.subtle}>Envoi en cours…</span> : null}
+        </div>
+
+        {error ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-3">
+            <p className="text-sm text-rose-700">
+              <b>Erreur :</b> {error}
+            </p>
+          </div>
+        ) : null}
       </div>
 
       {/* Preview */}
       {current.length > 0 ? (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {current.map((url) => (
-            <div key={url} className="border rounded overflow-hidden">
+            <div
+              key={url}
+              className="rounded-2xl overflow-hidden border border-slate-200/70 bg-white/70 backdrop-blur"
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt="" className="w-full h-24 object-cover" />
-              <button
-                type="button"
-                className="w-full text-xs py-2 border-t hover:bg-gray-50"
-                onClick={() => removeUrl(url)}
-                disabled={uploading}
-              >
-                Supprimer
-              </button>
+              <img src={url} alt="" className="w-full h-28 object-cover" />
+
+              <div className="p-2">
+                <button
+                  type="button"
+                  className={`${UI.btnBase} ${UI.btnDanger} w-full`}
+                  onClick={() => removeUrl(url)}
+                  disabled={uploading}
+                >
+                  Supprimer
+                </button>
+              </div>
             </div>
           ))}
         </div>
       ) : (
-        <p className="text-sm text-gray-500">Aucune photo.</p>
+        <div className={`${UI.card} ${UI.cardPad}`}>
+          <p className={UI.p}>Aucune photo.</p>
+        </div>
       )}
     </div>
   );
