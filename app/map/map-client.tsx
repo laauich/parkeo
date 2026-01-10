@@ -43,6 +43,9 @@ type Parking = {
   is_active: boolean | null;
 };
 
+type GeoPick = { lat: number; lng: number; displayName: string };
+type NominatimItem = { display_name: string; lat: string; lon: string };
+
 /* =========================
    Helpers
 ========================= */
@@ -79,6 +82,13 @@ function distanceMeters(
 
   const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
   return R * c;
+}
+
+function toPick(x: NominatimItem): GeoPick | null {
+  const lat = Number(x.lat);
+  const lng = Number(x.lon);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  return { lat, lng, displayName: x.display_name };
 }
 
 /* =========================
@@ -187,6 +197,15 @@ export default function MapClient() {
   // radius km (0 = all)
   const [radiusKm, setRadiusKm] = useState<number>(2);
 
+  // Search (Nominatim)
+  const [searchQ, setSearchQ] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchItems, setSearchItems] = useState<GeoPick[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<number | null>(null);
+
   // Geneva center default
   const center: [number, number] = [46.2044, 6.1432];
 
@@ -278,6 +297,79 @@ export default function MapClient() {
     [visibleRowsWithCoords]
   );
 
+  const goTo = useCallback((lat: number, lng: number, zoom = 15) => {
+    const map = mapRef.current;
+    if (!map) return;
+    requestAnimationFrame(() => {
+      try {
+        map.invalidateSize();
+        map.setView([lat, lng], zoom, { animate: true });
+      } catch {
+        // ignore
+      }
+    });
+  }, []);
+
+  // Nominatim search (debounced)
+  const canSearch = useMemo(() => searchQ.trim().length >= 3, [searchQ]);
+
+  const doSearch = useCallback(async (text: string) => {
+    if (!text.trim()) return;
+    setSearchLoading(true);
+    setSearchError(null);
+
+    try {
+      if (abortRef.current) abortRef.current.abort();
+      abortRef.current = new AbortController();
+
+      const url =
+        "https://nominatim.openstreetmap.org/search" +
+        `?format=json&addressdetails=1&limit=6&q=${encodeURIComponent(text)}`;
+
+      const res = await fetch(url, { signal: abortRef.current.signal });
+      const json = (await res.json().catch(() => [])) as NominatimItem[];
+
+      if (!res.ok) {
+        setSearchError(`Erreur recherche (${res.status})`);
+        setSearchItems([]);
+        setSearchOpen(false);
+        setSearchLoading(false);
+        return;
+      }
+
+      const mapped = (json ?? []).map(toPick).filter(Boolean) as GeoPick[];
+      setSearchItems(mapped);
+      setSearchOpen(true);
+      setSearchLoading(false);
+    } catch (e: unknown) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
+      setSearchError(e instanceof Error ? e.message : "Erreur inconnue");
+      setSearchItems([]);
+      setSearchOpen(false);
+      setSearchLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setSearchError(null);
+
+    if (!canSearch) {
+      setSearchItems([]);
+      setSearchOpen(false);
+      return;
+    }
+
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      void doSearch(searchQ);
+    }, 350);
+
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, [searchQ, canSearch, doSearch]);
+
   const locateMe = () => {
     setGeoStatus("");
     if (!("geolocation" in navigator)) {
@@ -293,14 +385,7 @@ export default function MapClient() {
         const lng = pos.coords.longitude;
         setMe({ lat, lng });
         setGeoStatus("Position détectée ✅");
-
-        const map = mapRef.current;
-        if (map) {
-          requestAnimationFrame(() => {
-            map.invalidateSize();
-            map.setView([lat, lng], 14, { animate: true });
-          });
-        }
+        goTo(lat, lng, 14);
       },
       (err) => {
         setMe(null);
@@ -316,14 +401,7 @@ export default function MapClient() {
     setMe(null);
     setGeoStatus("");
     setRadiusKm(2);
-
-    const map = mapRef.current;
-    if (map) {
-      requestAnimationFrame(() => {
-        map.invalidateSize();
-        map.setView(center, 12, { animate: true });
-      });
-    }
+    goTo(center[0], center[1], 12);
   };
 
   const btnPrimary = `${UI.btnBase} ${UI.btnPrimary}`;
@@ -331,16 +409,16 @@ export default function MapClient() {
 
   // ✅ Mobile map height: full screen minus navbar + action bar + spacing
   // NavbarClient is h-16 => 64px
-  const mobileMapHeight = "calc(100dvh - 64px - 92px - 16px)";
+  const mobileMapHeight = "calc(100dvh - 64px - 112px - 16px)";
 
   return (
     <main className={UI.page}>
       <div className={`${UI.container} ${UI.section} space-y-4`}>
-        {/* Desktop header (kept), hidden on mobile to maximize map */}
+        {/* Desktop header hidden on mobile */}
         <header className="hidden lg:flex items-start justify-between gap-4">
           <div className="space-y-1">
             <h1 className={UI.h2}>Carte des parkings</h1>
-            <p className={UI.p}>1 clic = recentre + zoom + popup</p>
+            <p className={UI.p}>Recherche d’adresse + GPS + popup</p>
             {geoStatus ? <p className={UI.subtle}>{geoStatus}</p> : null}
           </div>
 
@@ -351,7 +429,7 @@ export default function MapClient() {
           </div>
         </header>
 
-        {/* ✅ ACTION BAR: sticky under navbar, compact on mobile */}
+        {/* ✅ ACTION BAR: sticky under navbar */}
         <section
           className={[
             UI.card,
@@ -360,60 +438,134 @@ export default function MapClient() {
             "top-[72px]", // under navbar (64px) + 8px
             "bg-white/85 backdrop-blur",
             "border border-slate-200/70",
-            "flex flex-wrap items-center gap-2",
-            "min-h-[76px]",
+            "space-y-3",
           ].join(" ")}
         >
-          <button
-            type="button"
-            className={btnPrimary}
-            onClick={locateMe}
-            title="Trouver les places autour de moi"
-          >
-            📍 Autour de moi
-          </button>
+          {/* Search */}
+          <div className="relative">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  className={UI.input}
+                  value={searchQ}
+                  onChange={(e) => setSearchQ(e.target.value)}
+                  placeholder="Adresse… (ex: Rue du Rhône 12, Genève)"
+                  onFocus={() => {
+                    if (searchItems.length > 0) setSearchOpen(true);
+                  }}
+                  onBlur={() => {
+                    window.setTimeout(() => setSearchOpen(false), 120);
+                  }}
+                />
+                {searchLoading ? (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
+                    …
+                  </div>
+                ) : null}
+              </div>
 
-          <button type="button" className={btnGhost} onClick={clearMe}>
-            Réinitialiser
-          </button>
+              <button
+                type="button"
+                className={btnGhost}
+                onClick={() => {
+                  setSearchQ("");
+                  setSearchItems([]);
+                  setSearchOpen(false);
+                  setSearchError(null);
+                }}
+                title="Effacer"
+              >
+                Effacer
+              </button>
+            </div>
 
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-slate-600">Rayon :</span>
-            <select
-              className={UI.select + " w-auto min-w-[120px]"}
-              value={radiusKm}
-              onChange={(e) => setRadiusKm(Number(e.target.value))}
-              disabled={!me}
-              title={!me ? "Active “Autour de moi” d’abord" : ""}
-            >
-              <option value={0}>Tout</option>
-              <option value={1}>1 km</option>
-              <option value={2}>2 km</option>
-              <option value={5}>5 km</option>
-              <option value={10}>10 km</option>
-            </select>
+            {searchError ? (
+              <p className="mt-2 text-sm text-rose-700">Erreur : {searchError}</p>
+            ) : null}
 
-            <span className={UI.subtle}>
-              {me
-                ? `${visibleRowsWithCoords.length} place(s)`
-                : "Active le GPS"}
-            </span>
+            {searchOpen && searchItems.length > 0 ? (
+              <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                {searchItems.map((it) => (
+                  <button
+                    key={`${it.lat}-${it.lng}-${it.displayName}`}
+                    type="button"
+                    className="w-full text-left px-4 py-3 text-sm hover:bg-slate-50"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      goTo(it.lat, it.lng, 15);
+                      setSearchOpen(false);
+                    }}
+                  >
+                    <div className="font-medium text-slate-900">📍 {it.displayName}</div>
+                    <div className="text-xs text-slate-500">
+                      {it.lat.toFixed(5)} · {it.lng.toFixed(5)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {!searchLoading && searchOpen && searchItems.length === 0 && canSearch ? (
+              <p className="mt-2 text-sm text-slate-600">Aucun résultat.</p>
+            ) : null}
+
+            <div className="mt-2 text-xs text-slate-500">
+              Astuce : tape au moins 3 caractères.
+            </div>
           </div>
 
-          <div className="flex-1" />
+          {/* Actions row */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className={btnPrimary}
+              onClick={locateMe}
+              title="Trouver les places autour de moi"
+            >
+              📍 Autour de moi
+            </button>
 
-          {/* ✅ Mobile primary nav: list button */}
-          <Link href="/parkings" className={btnGhost}>
-            Vue liste
-          </Link>
+            <button type="button" className={btnGhost} onClick={clearMe}>
+              Réinitialiser
+            </button>
 
-          <button className={btnGhost} onClick={load} disabled={loading}>
-            {loading ? "…" : "Rafraîchir"}
-          </button>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-slate-600">Rayon :</span>
+              <select
+                className={UI.select + " w-auto min-w-[120px]"}
+                value={radiusKm}
+                onChange={(e) => setRadiusKm(Number(e.target.value))}
+                disabled={!me}
+                title={!me ? "Active “Autour de moi” d’abord" : ""}
+              >
+                <option value={0}>Tout</option>
+                <option value={1}>1 km</option>
+                <option value={2}>2 km</option>
+                <option value={5}>5 km</option>
+                <option value={10}>10 km</option>
+              </select>
 
-          {geoStatus ? (
-            <span className={`${UI.subtle} text-xs`}>{geoStatus}</span>
-          ) : null}
+              <span className={UI.subtle}>
+                {me
+                  ? `${visibleRowsWithCoords.length} place(s)`
+                  : "Active le GPS"}
+              </span>
+            </div>
+
+            <div className="flex-1" />
+
+            <Link href="/parkings" className={btnGhost}>
+              Vue liste
+            </Link>
+
+            <button className={btnGhost} onClick={load} disabled={loading}>
+              {loading ? "…" : "Rafraîchir"}
+            </button>
+
+            {geoStatus ? (
+              <span className={`${UI.subtle} text-xs`}>{geoStatus}</span>
+            ) : null}
+          </div>
         </section>
 
         {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
@@ -502,7 +654,7 @@ export default function MapClient() {
           </div>
         </section>
 
-        {/* ✅ DESKTOP: list left / map right (same as before) */}
+        {/* ✅ DESKTOP: list left / map right */}
         <div className="hidden lg:grid lg:grid-cols-2 gap-4" style={{ height: 620 }}>
           {/* LIST */}
           <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
