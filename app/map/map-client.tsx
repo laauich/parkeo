@@ -82,13 +82,13 @@ function distanceMeters(
 }
 
 /* =========================
-   Icons
+   Icons (slightly larger for mobile visibility)
 ========================= */
 function carIcon() {
   const html = `
 <div style="
-  width:34px;
-  height:34px;
+  width:38px;
+  height:38px;
   border-radius:999px;
   background:#111;
   display:flex;
@@ -98,7 +98,7 @@ function carIcon() {
   border:2px solid #fff;
 ">
   <svg xmlns="http://www.w3.org/2000/svg"
-    width="18" height="18" viewBox="0 0 24 24"
+    width="20" height="20" viewBox="0 0 24 24"
     fill="none" stroke="white" stroke-width="2"
     stroke-linecap="round" stroke-linejoin="round">
     <path d="M3 13l2-5a3 3 0 0 1 3-2h8a3 3 0 0 1 3 2l2 5"/>
@@ -111,8 +111,8 @@ function carIcon() {
   return L.divIcon({
     className: "parkeo-car-marker",
     html,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    iconSize: [38, 38],
+    iconAnchor: [19, 19],
     popupAnchor: [0, -16],
   });
 }
@@ -120,8 +120,8 @@ function carIcon() {
 function userIcon() {
   const html = `
 <div style="
-  width:32px;
-  height:32px;
+  width:34px;
+  height:34px;
   border-radius:999px;
   background:#7c3aed;
   display:flex;
@@ -142,8 +142,8 @@ function userIcon() {
   return L.divIcon({
     className: "parkeo-user-marker",
     html,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
     popupAnchor: [0, -16],
   });
 }
@@ -253,19 +253,16 @@ export default function MapClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Select helper: recentre + zoom + popup (works for LIST click too)
+  // ✅ Select helper: recentre + zoom + popup
   const focusParking = useCallback(
     (id: string) => {
       setSelectedId(id);
 
-      // find coords (only if marker exists)
       const p = visibleRowsWithCoords.find((x) => x.id === id) ?? null;
 
-      // open popup
       const mk = markerRefs.current[id];
       if (mk) mk.openPopup();
 
-      // then recenter+zoom
       const map = mapRef.current;
       if (!map || !p) return;
 
@@ -329,15 +326,18 @@ export default function MapClient() {
     }
   };
 
-  // UI cosmetics
   const btnPrimary = `${UI.btnBase} ${UI.btnPrimary}`;
   const btnGhost = `${UI.btnBase} ${UI.btnGhost}`;
+
+  // ✅ Mobile map height: full screen minus navbar + action bar + spacing
+  // NavbarClient is h-16 => 64px
+  const mobileMapHeight = "calc(100dvh - 64px - 92px - 16px)";
 
   return (
     <main className={UI.page}>
       <div className={`${UI.container} ${UI.section} space-y-4`}>
-        {/* Header */}
-        <header className="flex items-start justify-between gap-4">
+        {/* Desktop header (kept), hidden on mobile to maximize map */}
+        <header className="hidden lg:flex items-start justify-between gap-4">
           <div className="space-y-1">
             <h1 className={UI.h2}>Carte des parkings</h1>
             <p className={UI.p}>1 clic = recentre + zoom + popup</p>
@@ -351,18 +351,25 @@ export default function MapClient() {
           </div>
         </header>
 
-        {/* ===== MOBILE BAR (sticky) ===== */}
+        {/* ✅ ACTION BAR: sticky under navbar, compact on mobile */}
         <section
           className={[
             UI.card,
             UI.cardPad,
-            "sticky top-2 z-40",
+            "sticky z-40",
+            "top-[72px]", // under navbar (64px) + 8px
             "bg-white/85 backdrop-blur",
             "border border-slate-200/70",
             "flex flex-wrap items-center gap-2",
+            "min-h-[76px]",
           ].join(" ")}
         >
-          <button type="button" className={btnPrimary} onClick={locateMe}>
+          <button
+            type="button"
+            className={btnPrimary}
+            onClick={locateMe}
+            title="Trouver les places autour de moi"
+          >
             📍 Autour de moi
           </button>
 
@@ -385,32 +392,129 @@ export default function MapClient() {
               <option value={5}>5 km</option>
               <option value={10}>10 km</option>
             </select>
+
+            <span className={UI.subtle}>
+              {me
+                ? `${visibleRowsWithCoords.length} place(s)`
+                : "Active le GPS"}
+            </span>
           </div>
 
           <div className="flex-1" />
 
-          <span className={UI.subtle}>
-            {me
-              ? `${visibleRowsWithCoords.length} place(s)`
-              : "Active le GPS pour filtrer"}
-          </span>
+          {/* ✅ Mobile primary nav: list button */}
+          <Link href="/parkings" className={btnGhost}>
+            Vue liste
+          </Link>
 
           <button className={btnGhost} onClick={load} disabled={loading}>
             {loading ? "…" : "Rafraîchir"}
           </button>
+
+          {geoStatus ? (
+            <span className={`${UI.subtle} text-xs`}>{geoStatus}</span>
+          ) : null}
         </section>
 
         {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
 
-        {/* ===== RESPONSIVE LAYOUT ===== */}
-        <div className="grid lg:grid-cols-2 gap-4">
-          {/* LIST: hidden on mobile, shown on desktop */}
-          <section className={`${UI.card} ${UI.cardPad} overflow-auto hidden lg:block`} style={{ height: 620 }}>
+        {/* ✅ MOBILE: big map only */}
+        <section className={`${UI.card} overflow-hidden lg:hidden`}>
+          <div className="w-full" style={{ height: mobileMapHeight }}>
+            <MapContainer
+              center={center}
+              zoom={12}
+              style={{ height: "100%", width: "100%" }}
+              scrollWheelZoom
+            >
+              <MapRefSetter onMap={handleMap} />
+
+              <TileLayer
+                attribution="&copy; OpenStreetMap contributors"
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+
+              {/* Me */}
+              {me ? (
+                <>
+                  <Marker position={[me.lat, me.lng]} icon={userIcon()}>
+                    <Popup autoPan closeButton>
+                      <div className="text-xs w-[180px] space-y-1">
+                        <div className="font-semibold text-sm text-slate-900">
+                          Vous
+                        </div>
+                        <div className="text-slate-600">Position actuelle</div>
+                      </div>
+                    </Popup>
+                  </Marker>
+
+                  {radiusKm > 0 ? (
+                    <Circle
+                      center={[me.lat, me.lng]}
+                      radius={radiusKm * 1000}
+                      pathOptions={{}}
+                    />
+                  ) : null}
+                </>
+              ) : null}
+
+              {visibleRowsWithCoords.map((p) => (
+                <Marker
+                  key={p.id}
+                  position={[p.lat as number, p.lng as number]}
+                  icon={carIcon()}
+                  ref={(r) => {
+                    markerRefs.current[p.id] = r as unknown as L.Marker | null;
+                  }}
+                  eventHandlers={{
+                    click: () => focusParking(p.id),
+                  }}
+                >
+                  <Popup autoPan closeButton>
+                    <div className="text-xs w-[220px] space-y-1">
+                      <div className="font-semibold text-sm leading-tight text-slate-900">
+                        {p.title}
+                      </div>
+
+                      <div className="text-slate-600 leading-snug">
+                        {formatAddress(p) || "Adresse non renseignée"}
+                      </div>
+
+                      {p.price_hour !== null ? (
+                        <div className="text-violet-700 font-semibold">
+                          {p.price_hour} CHF / h
+                        </div>
+                      ) : null}
+
+                      <div className="pt-2">
+                        <Link
+                          className={`${UI.btnBase} ${UI.btnPrimary} w-full justify-center`}
+                          href={`/parkings/${p.id}`}
+                        >
+                          Voir détails
+                        </Link>
+                      </div>
+                    </div>
+                  </Popup>
+                </Marker>
+              ))}
+            </MapContainer>
+          </div>
+        </section>
+
+        {/* ✅ DESKTOP: list left / map right (same as before) */}
+        <div className="hidden lg:grid lg:grid-cols-2 gap-4" style={{ height: 620 }}>
+          {/* LIST */}
+          <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
             <div className="flex items-center justify-between mb-3">
               <div className="font-medium text-sm text-slate-900">
                 Places disponibles{" "}
                 <span className={UI.subtle}>({visibleRows.length})</span>
               </div>
+
+              <button className={btnGhost} onClick={load} disabled={loading}>
+                {loading ? "…" : "Rafraîchir"}
+              </button>
             </div>
 
             <div className="space-y-3">
@@ -431,7 +535,11 @@ export default function MapClient() {
                       <div className="w-28 h-20 bg-slate-100 shrink-0">
                         {photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={photo} alt="" className="w-full h-full object-cover" />
+                          <img
+                            src={photo}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
                             —
@@ -441,7 +549,9 @@ export default function MapClient() {
 
                       <div className="p-4 flex-1">
                         <div className="flex justify-between gap-3">
-                          <div className="font-medium text-slate-900">{p.title}</div>
+                          <div className="font-medium text-slate-900">
+                            {p.title}
+                          </div>
                           {p.price_hour !== null && (
                             <div className="text-sm whitespace-nowrap font-semibold text-violet-700">
                               {p.price_hour} CHF/h
@@ -476,115 +586,89 @@ export default function MapClient() {
             </div>
           </section>
 
-          {/* MAP: full on mobile, fixed height on desktop */}
-          <section
-            className={`${UI.card} overflow-hidden`}
-            style={{
-              height: 620, // desktop default
-            }}
-          >
-            {/* Mobile height: almost full viewport */}
-            <div
-              className="w-full h-full"
-              style={{
-                height: "calc(100vh - 240px)", // ✅ mobile: big map (tweak if needed)
-              }}
-            >
-              <div className="h-[620px] lg:h-full" style={{ height: "100%" }}>
-                <MapContainer
-                  center={center}
-                  zoom={12}
-                  style={{ height: "100%", width: "100%" }}
-                  scrollWheelZoom
-                >
-                  <MapRefSetter onMap={handleMap} />
+          {/* MAP */}
+          <section className={`${UI.card} overflow-hidden`}>
+            <div className="w-full h-full">
+              <MapContainer
+                center={center}
+                zoom={12}
+                style={{ height: "100%", width: "100%" }}
+                scrollWheelZoom
+              >
+                <MapRefSetter onMap={handleMap} />
 
-                  <TileLayer
-                    attribution="&copy; OpenStreetMap contributors"
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  />
+                <TileLayer
+                  attribution="&copy; OpenStreetMap contributors"
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
 
-                  {/* Me */}
-                  {me ? (
-                    <>
-                      <Marker position={[me.lat, me.lng]} icon={userIcon()}>
-                        <Popup autoPan closeButton>
-                          <div className="text-xs w-[180px] space-y-1">
-                            <div className="font-semibold text-sm text-slate-900">
-                              Vous
-                            </div>
-                            <div className="text-slate-600">Position actuelle</div>
-                          </div>
-                        </Popup>
-                      </Marker>
-
-                      {radiusKm > 0 ? (
-                        <Circle
-                          center={[me.lat, me.lng]}
-                          radius={radiusKm * 1000}
-                          pathOptions={{}}
-                        />
-                      ) : null}
-                    </>
-                  ) : null}
-
-                  {visibleRowsWithCoords.map((p) => (
-                    <Marker
-                      key={p.id}
-                      position={[p.lat as number, p.lng as number]}
-                      icon={carIcon()}
-                      ref={(r) => {
-                        markerRefs.current[p.id] = r as unknown as L.Marker | null;
-                      }}
-                      eventHandlers={{
-                        click: () => focusParking(p.id),
-                      }}
-                    >
+                {/* Me */}
+                {me ? (
+                  <>
+                    <Marker position={[me.lat, me.lng]} icon={userIcon()}>
                       <Popup autoPan closeButton>
-                        <div className="text-xs w-[200px] space-y-1">
-                          <div className="font-semibold text-sm leading-tight text-slate-900">
-                            {p.title}
+                        <div className="text-xs w-[180px] space-y-1">
+                          <div className="font-semibold text-sm text-slate-900">
+                            Vous
                           </div>
-
-                          <div className="text-slate-600 leading-snug">
-                            {formatAddress(p) || "Adresse non renseignée"}
-                          </div>
-
-                          {p.price_hour !== null ? (
-                            <div className="text-violet-700 font-semibold">
-                              {p.price_hour} CHF / h
-                            </div>
-                          ) : null}
-
-                          <div className="pt-1">
-                            <Link className={UI.link} href={`/parkings/${p.id}`}>
-                              Voir →
-                            </Link>
-                          </div>
+                          <div className="text-slate-600">Position actuelle</div>
                         </div>
                       </Popup>
                     </Marker>
-                  ))}
-                </MapContainer>
-              </div>
+
+                    {radiusKm > 0 ? (
+                      <Circle
+                        center={[me.lat, me.lng]}
+                        radius={radiusKm * 1000}
+                        pathOptions={{}}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+
+                {visibleRowsWithCoords.map((p) => (
+                  <Marker
+                    key={p.id}
+                    position={[p.lat as number, p.lng as number]}
+                    icon={carIcon()}
+                    ref={(r) => {
+                      markerRefs.current[p.id] = r as unknown as L.Marker | null;
+                    }}
+                    eventHandlers={{
+                      click: () => focusParking(p.id),
+                    }}
+                  >
+                    <Popup autoPan closeButton>
+                      <div className="text-xs w-[220px] space-y-1">
+                        <div className="font-semibold text-sm leading-tight text-slate-900">
+                          {p.title}
+                        </div>
+
+                        <div className="text-slate-600 leading-snug">
+                          {formatAddress(p) || "Adresse non renseignée"}
+                        </div>
+
+                        {p.price_hour !== null ? (
+                          <div className="text-violet-700 font-semibold">
+                            {p.price_hour} CHF / h
+                          </div>
+                        ) : null}
+
+                        <div className="pt-2">
+                          <Link
+                            className={`${UI.btnBase} ${UI.btnPrimary} w-full justify-center`}
+                            href={`/parkings/${p.id}`}
+                          >
+                            Voir détails
+                          </Link>
+                        </div>
+                      </div>
+                    </Popup>
+                  </Marker>
+                ))}
+              </MapContainer>
             </div>
           </section>
-        </div>
-
-        {/* Mobile helper row */}
-        <div className="lg:hidden">
-          <div className={`${UI.card} ${UI.cardPad} flex items-center justify-between`}>
-            <div className="text-sm text-slate-700">
-              Sur mobile, la liste est dans{" "}
-              <Link className={UI.link} href="/parkings">
-                Vue liste
-              </Link>
-              .
-            </div>
-            <Link href="/parkings" className={btnPrimary}>
-              Voir la liste
-            </Link>
-          </div>
         </div>
       </div>
     </main>
