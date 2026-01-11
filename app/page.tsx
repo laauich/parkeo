@@ -1,3 +1,4 @@
+// app/page.tsx
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
@@ -40,42 +41,22 @@ type ParkingCardRow = {
 
 function IconMap(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M10 6l-6 2v12l6-2 4 2 6-2V6l-6 2-4-2z"
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinejoin="round"
       />
-      <path
-        d="M10 6v12"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-      <path
-        d="M14 8v12"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
+      <path d="M10 6v12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M14 8v12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
 
 function IconBolt(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M13 2L4 14h7l-1 8 10-14h-7l0-6z"
         stroke="currentColor"
@@ -88,12 +69,7 @@ function IconBolt(props: { className?: string }) {
 
 function IconShield(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z"
         stroke="currentColor"
@@ -113,12 +89,7 @@ function IconShield(props: { className?: string }) {
 
 function IconClock(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10z"
         stroke="currentColor"
@@ -137,24 +108,14 @@ function IconClock(props: { className?: string }) {
 
 function IconBuilding(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M4 21V7l8-4 8 4v14"
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinejoin="round"
       />
-      <path
-        d="M9 21v-6h6v6"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
+      <path d="M9 21v-6h6v6" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
       <path
         d="M8 11h.01M12 11h.01M16 11h.01M8 14h.01M12 14h.01M16 14h.01"
         stroke="currentColor"
@@ -234,8 +195,7 @@ export default async function HomePage() {
     name: "Parkeo",
     url: "https://parkeo.ch",
     areaServed: { "@type": "City", name: "Genève" },
-    description:
-      "Plateforme de réservation et de location de places de parking à Genève.",
+    description: "Plateforme de réservation et de location de places de parking à Genève.",
   };
 
   const jsonLdFAQ = {
@@ -256,8 +216,7 @@ export default async function HomePage() {
         name: "Est-ce possible de réserver à la journée ?",
         acceptedAnswer: {
           "@type": "Answer",
-          text:
-            "Oui. Certaines places proposent un tarif journalier, affiché sur la fiche.",
+          text: "Oui. Certaines places proposent un tarif journalier, affiché sur la fiche.",
         },
       },
       {
@@ -265,8 +224,7 @@ export default async function HomePage() {
         name: "Je suis propriétaire : comment proposer ma place ?",
         acceptedAnswer: {
           "@type": "Answer",
-          text:
-            "Cliquez sur “Proposer ma place”, ajoutez l’adresse, la localisation sur la carte et des photos.",
+          text: "Cliquez sur “Proposer ma place”, ajoutez l’adresse, la localisation sur la carte et des photos.",
         },
       },
       {
@@ -320,21 +278,23 @@ export default async function HomePage() {
               UI.card,
               UI.cardPad,
               "relative overflow-hidden",
-              "min-h-[320px] sm:min-h-[360px]",
+              "min-h-[340px] sm:min-h-[400px]",
             ].join(" ")}
           >
             {/* Background image */}
             <div className="pointer-events-none absolute inset-0">
+              {/* Image un peu plus visible */}
               <div
-                className="absolute inset-0 bg-center bg-cover opacity-75"
+                className="absolute inset-0 bg-center bg-cover opacity-90"
                 style={{ backgroundImage: "url(/home-bg.jpg)" }}
               />
-              {/* Overlay léger pour garder un rendu premium, sans cacher l'image */}
-              <div className="absolute inset-0 bg-white/30" />
+
+              {/* Overlay plus contrasté pour lisibilité (texte plus noir) */}
+              <div className="absolute inset-0 bg-gradient-to-b from-white/55 via-white/35 to-white/55" />
 
               {/* Accents premium */}
-              <div className="absolute -top-28 -right-28 h-96 w-96 rounded-full bg-violet-500/14 blur-3xl" />
-              <div className="absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-fuchsia-400/12 blur-3xl" />
+              <div className="absolute -top-28 -right-28 h-96 w-96 rounded-full bg-violet-500/16 blur-3xl" />
+              <div className="absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-fuchsia-400/14 blur-3xl" />
             </div>
 
             {/* Content */}
@@ -345,38 +305,31 @@ export default async function HomePage() {
                 <span className={UI.chip}>Paiement sécurisé</span>
               </div>
 
-              <h1 className={[UI.h1, "mt-4 max-w-3xl"].join(" ")}>
+              <h1 className={[UI.h1, "mt-4 max-w-3xl", "text-slate-950"].join(" ")}>
                 Réservez une place de parking à Genève, simplement.
               </h1>
 
-              <p className={[UI.p, "mt-3 max-w-2xl"].join(" ")}>
-                À l’heure ou à la journée. Trouvez une place disponible près de
-                vous, et réservez en quelques clics.
+              <p className={[UI.p, "mt-3 max-w-2xl", "text-slate-800"].join(" ")}>
+                À l’heure ou à la journée. Trouvez une place disponible près de vous, et réservez en quelques clics.
               </p>
 
               <div className="mt-6 flex flex-col sm:flex-row gap-3">
-                <Link
-                  href="/map"
-                  className={[UI.btnBase, UI.btnPrimary].join(" ")}
-                >
+                <Link href="/map" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
                   Voir la carte
                 </Link>
 
-                <Link
-                  href="/parkings/new"
-                  className={[UI.btnBase, UI.btnGhost].join(" ")}
-                >
+                <Link href="/parkings/new" className={[UI.btnBase, UI.btnGhost].join(" ")}>
                   Proposer ma place
                 </Link>
               </div>
 
-              <p className={[UI.subtle, "mt-4"].join(" ")}>
+              <p className={[UI.subtle, "mt-4", "text-slate-700"].join(" ")}>
                 MVP local (Genève). Version PRO 🇨🇭 ensuite.
               </p>
             </div>
           </section>
 
-          {/* MODULES (texte SEO hors image + icônes) */}
+          {/* MODULES */}
           <section className="mt-8">
             <div className={UI.sectionTitleRow}>
               <h2 className={UI.h2}>Pourquoi Parkeo</h2>
@@ -416,6 +369,9 @@ export default async function HomePage() {
             <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {rows.length > 0 ? (
                 rows.map((p) => (
+                  // ✅ IMPORTANT:
+                  // On garde la card cliquable via Link,
+                  // et on évite le <Link> dans <Link> => on utilise un <span role="link"> pour le "bouton".
                   <Link
                     key={p.id}
                     href={`/parkings/${p.id}`}
@@ -424,9 +380,7 @@ export default async function HomePage() {
                     <div className={UI.cardPad}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="font-semibold text-slate-900 truncate">
-                            {p.title}
-                          </div>
+                          <div className="font-semibold text-slate-900 truncate">{p.title}</div>
                           <div className="mt-1 text-xs text-slate-500">
                             {p.address || "Adresse non renseignée"}
                           </div>
@@ -441,17 +395,27 @@ export default async function HomePage() {
                             <div className="text-sm text-slate-400">—</div>
                           )}
                           {p.price_day !== null ? (
-                            <div className="text-xs text-slate-500">
-                              {p.price_day} CHF/j
-                            </div>
+                            <div className="text-xs text-slate-500">{p.price_day} CHF/j</div>
                           ) : null}
                         </div>
                       </div>
 
+                      {/* ✅ Ici : même direction qu’avant (gauche → droite),
+                          mais "Voir détails →" devient un bouton violet visuel */}
                       <div className="mt-4 flex items-center justify-between">
-                        <span className="text-xs text-slate-500">
+                        <span
+                          role="link"
+                          aria-label="Voir détails"
+                          className={[
+                            UI.btnBase,
+                            UI.btnPrimary,
+                            "px-3 py-2 text-xs rounded-full",
+                            "pointer-events-none select-none", // car la card entière est déjà cliquable
+                          ].join(" ")}
+                        >
                           Voir détails →
                         </span>
+
                         <span className={UI.chip}>Disponible</span>
                       </div>
                     </div>
@@ -459,14 +423,9 @@ export default async function HomePage() {
                 ))
               ) : (
                 <div className={[UI.card, UI.cardPad].join(" ")}>
-                  <p className={UI.p}>
-                    Aucune place de parking disponible à Genève pour le moment.
-                  </p>
+                  <p className={UI.p}>Aucune place de parking disponible à Genève pour le moment.</p>
                   <div className="mt-4">
-                    <Link
-                      href="/parkings/new"
-                      className={[UI.btnBase, UI.btnPrimary].join(" ")}
-                    >
+                    <Link href="/parkings/new" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
                       Proposer une place
                     </Link>
                   </div>
@@ -487,33 +446,23 @@ export default async function HomePage() {
             <div className="mt-4 grid gap-4 lg:grid-cols-3">
               <div className={[UI.card, UI.cardPad, "lg:col-span-2"].join(" ")}>
                 <p className={UI.p}>
-                  Parkeo est une plateforme dédiée à la{" "}
-                  <b>location de places de parking à Genève</b>. Que vous
-                  cherchiez un parking pour quelques heures, une journée ou
-                  davantage, vous pouvez{" "}
-                  <b>réserver une place disponible</b> en quelques clics, sans
-                  abonnement.
+                  Parkeo est une plateforme dédiée à la <b>location de places de parking à Genève</b>.
+                  Que vous cherchiez un parking pour quelques heures, une journée ou davantage, vous pouvez{" "}
+                  <b>réserver une place disponible</b> en quelques clics, sans abonnement.
                 </p>
 
                 <p className={[UI.p, "mt-3"].join(" ")}>
-                  Les zones les plus recherchées : <b>Genève centre</b>,{" "}
-                  <b>Plainpalais</b>, <b>Eaux-Vives</b>, <b>Carouge</b> et
-                  alentours. Passez par la carte pour repérer l’emplacement
-                  exact, puis choisissez vos dates.
+                  Les zones les plus recherchées : <b>Genève centre</b>, <b>Plainpalais</b>,{" "}
+                  <b>Eaux-Vives</b>, <b>Carouge</b> et alentours. Passez par la carte pour repérer
+                  l’emplacement exact, puis choisissez vos dates.
                 </p>
 
                 <div className="mt-5 flex flex-col sm:flex-row gap-3">
-                  <Link
-                    href="/map"
-                    className={[UI.btnBase, UI.btnPrimary].join(" ")}
-                  >
+                  <Link href="/map" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
                     <IconMap className="h-4 w-4" />
                     Voir les parkings sur la carte
                   </Link>
-                  <Link
-                    href="/parkings/new"
-                    className={[UI.btnBase, UI.btnGhost].join(" ")}
-                  >
+                  <Link href="/parkings/new" className={[UI.btnBase, UI.btnGhost].join(" ")}>
                     <IconBuilding className="h-4 w-4" />
                     Mettre une place en location
                   </Link>
@@ -529,17 +478,9 @@ export default async function HomePage() {
                 </div>
 
                 <ul className="mt-4 space-y-3 text-sm text-slate-600">
-                  <li>
-                    • Comparez <b>prix/h</b> et <b>prix/j</b> selon la durée.
-                  </li>
-                  <li>
-                    • Réservez tôt pour <b>centre-ville</b> et quartiers très
-                    demandés.
-                  </li>
-                  <li>
-                    • Vérifiez les <b>instructions d’accès</b> (badge, portail,
-                    étage, etc.).
-                  </li>
+                  <li>• Comparez <b>prix/h</b> et <b>prix/j</b> selon la durée.</li>
+                  <li>• Réservez tôt pour <b>centre-ville</b> et quartiers très demandés.</li>
+                  <li>• Vérifiez les <b>instructions d’accès</b> (badge, portail, étage, etc.).</li>
                 </ul>
               </div>
             </div>

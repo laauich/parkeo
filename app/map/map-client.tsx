@@ -407,14 +407,17 @@ export default function MapClient() {
   const btnPrimary = `${UI.btnBase} ${UI.btnPrimary}`;
   const btnGhost = `${UI.btnBase} ${UI.btnGhost}`;
 
-  // ✅ Mobile map height: full screen minus navbar + action bar + spacing
+  // ✅ Leaflet popup sometimes makes text gray: force white on CTA
+  const popupCtaClass = `${UI.btnBase} ${UI.btnPrimary} w-full justify-center !text-white`;
+
+  // ✅ Mobile: map should be big (fullscreen - navbar). action bar is sticky and overlays content.
   // NavbarClient is h-16 => 64px
-  const mobileMapHeight = "calc(100dvh - 64px - 112px - 16px)";
+  const mobileMapHeight = "calc(100dvh - 64px)";
 
   return (
     <main className={UI.page}>
       <div className={`${UI.container} ${UI.section} space-y-4`}>
-        {/* Desktop header hidden on mobile */}
+        {/* Desktop header */}
         <header className="hidden lg:flex items-start justify-between gap-4">
           <div className="space-y-1">
             <h1 className={UI.h2}>Carte des parkings</h1>
@@ -429,13 +432,13 @@ export default function MapClient() {
           </div>
         </header>
 
-        {/* ✅ ACTION BAR: sticky under navbar */}
+        {/* ✅ ACTION BAR (sticky under navbar) */}
         <section
           className={[
             UI.card,
             UI.cardPad,
             "sticky z-40",
-            "top-[72px]", // under navbar (64px) + 8px
+            "top-[72px]",
             "bg-white/85 backdrop-blur",
             "border border-slate-200/70",
             "space-y-3",
@@ -480,7 +483,9 @@ export default function MapClient() {
             </div>
 
             {searchError ? (
-              <p className="mt-2 text-sm text-rose-700">Erreur : {searchError}</p>
+              <p className="mt-2 text-sm text-rose-700">
+                Erreur : {searchError}
+              </p>
             ) : null}
 
             {searchOpen && searchItems.length > 0 ? (
@@ -496,7 +501,9 @@ export default function MapClient() {
                       setSearchOpen(false);
                     }}
                   >
-                    <div className="font-medium text-slate-900">📍 {it.displayName}</div>
+                    <div className="font-medium text-slate-900">
+                      📍 {it.displayName}
+                    </div>
                     <div className="text-xs text-slate-500">
                       {it.lat.toFixed(5)} · {it.lng.toFixed(5)}
                     </div>
@@ -546,9 +553,7 @@ export default function MapClient() {
               </select>
 
               <span className={UI.subtle}>
-                {me
-                  ? `${visibleRowsWithCoords.length} place(s)`
-                  : "Active le GPS"}
+                {me ? `${visibleRowsWithCoords.length} place(s)` : "Active le GPS"}
               </span>
             </div>
 
@@ -570,7 +575,7 @@ export default function MapClient() {
 
         {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
 
-        {/* ✅ MOBILE: big map only */}
+        {/* ✅ MOBILE: big map only (full height) */}
         <section className={`${UI.card} overflow-hidden lg:hidden`}>
           <div className="w-full" style={{ height: mobileMapHeight }}>
             <MapContainer
@@ -639,10 +644,7 @@ export default function MapClient() {
                       ) : null}
 
                       <div className="pt-2">
-                        <Link
-                          className={`${UI.btnBase} ${UI.btnPrimary} w-full justify-center`}
-                          href={`/parkings/${p.id}`}
-                        >
+                        <Link className={popupCtaClass} href={`/parkings/${p.id}`}>
                           Voir détails
                         </Link>
                       </div>
@@ -807,10 +809,7 @@ export default function MapClient() {
                         ) : null}
 
                         <div className="pt-2">
-                          <Link
-                            className={`${UI.btnBase} ${UI.btnPrimary} w-full justify-center`}
-                            href={`/parkings/${p.id}`}
-                          >
+                          <Link className={popupCtaClass} href={`/parkings/${p.id}`}>
                             Voir détails
                           </Link>
                         </div>

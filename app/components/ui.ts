@@ -4,16 +4,16 @@ export const UI = {
      Layout
   ========================= */
 
-  // Page = fond global (prend toute la largeur + toute la hauteur sous la navbar)
+  // Page = fond global (pleine largeur + hauteur sous la navbar)
+  // ✅ utilise 100dvh (meilleur sur mobile) et garde un fallback 100vh
   page:
-    "min-h-[calc(100vh-64px)] w-full " +
+    "min-h-[calc(100vh-64px)] min-h-[calc(100dvh-64px)] w-full " +
     "bg-gradient-to-b from-violet-200/80 via-white to-white",
 
   /**
-   * Container FULL WIDTH :
+   * Container FULL WIDTH
    * - occupe 100% de la largeur
    * - padding responsive
-   * (Si tu veux un max-width plus tard, on remet max-w-7xl ou max-w-[1400px])
    */
   container: "w-full px-4 sm:px-6 lg:px-8",
 
@@ -58,45 +58,63 @@ export const UI = {
      Buttons
   ========================= */
 
+  // ✅ Ajouts importants:
+  // - "select-none" (UX)
+  // - "whitespace-nowrap" (évite casse étrange)
+  // - "disabled:pointer-events-none" (évite clics fantômes)
+  // - "text-white" forcé côté primary dans des contextes type Leaflet via "!text-white" si besoin au callsite
   btnBase:
     "inline-flex items-center justify-center gap-2 " +
-    "font-medium transition " +
+    "font-medium transition select-none whitespace-nowrap " +
     "rounded-xl px-5 py-2.5 text-sm " +
-    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
+    "disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none",
 
   // Primary (violet premium)
+  // ✅ garde text-white ici; si un conteneur externe force la couleur (Leaflet),
+  // tu peux ajouter "!text-white" sur le bouton directement.
   btnPrimary:
     "bg-violet-600 text-white " +
     "hover:bg-violet-700 " +
     "focus-visible:ring-violet-300 " +
-    "disabled:bg-violet-300 disabled:cursor-not-allowed",
+    "disabled:bg-violet-300",
 
   // Secondary (dark)
   btnSecondary:
     "bg-slate-900 text-white " +
     "hover:bg-slate-800 " +
     "focus-visible:ring-slate-400 " +
-    "disabled:bg-slate-400 disabled:cursor-not-allowed",
+    "disabled:bg-slate-400",
 
   // Ghost
   btnGhost:
     "bg-white/80 text-slate-900 " +
     "border border-slate-200 " +
     "hover:bg-slate-50 " +
-    "focus-visible:ring-slate-300 " +
-    "disabled:opacity-60 disabled:cursor-not-allowed",
+    "focus-visible:ring-slate-300",
 
   // Danger
   btnDanger:
     "bg-rose-600 text-white " +
     "hover:bg-rose-700 " +
     "focus-visible:ring-rose-300 " +
-    "disabled:bg-rose-300 disabled:cursor-not-allowed",
+    "disabled:bg-rose-300",
+
+  /**
+   * ✅ Nouveau: bouton "link" violet (pour remplacer les liens noirs type "Voir détails →")
+   * Utilise-le sur les cards quand tu veux un CTA violet cohérent.
+   *
+   * Exemple:
+   * <Link className={`${UI.btnBase} ${UI.btnPrimary} ${UI.btnSm}`} ...>Détails</Link>
+   */
+  btnSm: "px-4 py-2 text-sm rounded-xl",
+  btnPill: "rounded-full",
 
   /* =========================
      Links & Nav
   ========================= */
 
+  // ✅ lien texte (inline)
   link:
     "text-violet-700 hover:text-violet-800 " +
     "underline underline-offset-4 transition",
@@ -114,6 +132,12 @@ export const UI = {
     "inline-flex items-center gap-1 rounded-full " +
     "border border-slate-200 bg-slate-50 " +
     "px-2.5 py-1 text-xs text-slate-700",
+
+  // ✅ chips “success” utile (Disponible / OK) si tu veux harmoniser
+  chipSuccess:
+    "inline-flex items-center gap-1 rounded-full " +
+    "border border-emerald-200 bg-emerald-50 " +
+    "px-2.5 py-1 text-xs text-emerald-800",
 
   /* =========================
      Inputs

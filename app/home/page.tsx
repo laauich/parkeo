@@ -41,7 +41,7 @@ export default function HomeLandingPage() {
           </div>
 
           <p className="mt-4 text-sm text-gray-500">
-            MVP local (Genève). Paiement Stripe et version PRO 🇨🇭 à venir.
+          
           </p>
         </section>
 
