@@ -173,7 +173,7 @@ function MapRefSetter({
   useEffect(() => {
     onMap(map);
 
-    // Very important for mobile layout: Leaflet needs a size recalculation
+    // Mobile reliability: ensure Leaflet knows its real size
     requestAnimationFrame(() => {
       try {
         map.invalidateSize();
@@ -207,7 +207,6 @@ export default function MapClient() {
 
   const [mapReady, setMapReady] = useState(false);
 
-  // markers refs
   const markerRefs = useRef<Record<string, L.Marker | null>>({});
   const meMarkerRef = useRef<L.Marker | null>(null);
 
@@ -217,11 +216,9 @@ export default function MapClient() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // User position
   const [me, setMe] = useState<{ lat: number; lng: number } | null>(null);
   const [geoStatus, setGeoStatus] = useState<string>("");
 
-  // radius km (0 = all)
   const [radiusKm, setRadiusKm] = useState<number>(2);
 
   // Search (DESKTOP only)
@@ -233,7 +230,6 @@ export default function MapClient() {
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<number | null>(null);
 
-  // Geneva center default
   const center: [number, number] = [46.2044, 6.1432];
 
   const visibleRows = useMemo(() => {
@@ -321,14 +317,37 @@ export default function MapClient() {
   );
 
   /* =========================
-     ✅ LEAFLET GEOLOCATION (most reliable recenter)
+     ✅ GEOLOCATION "BÉTON" MOBILE
+     - map.locate() + on locationfound => flyTo (force center/zoom)
+     - retry (timing mobile)
   ========================= */
   const pendingLocateRef = useRef(false);
 
+  const forceGoToMe = useCallback((lat: number, lng: number) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    requestAnimationFrame(() => {
+      try {
+        map.invalidateSize();
+
+        // ✅ Force zoom + center no matter what
+        // flyTo is smoother, fallback setView if needed
+        map.flyTo([lat, lng], 16, { animate: true, duration: 0.6 });
+      } catch {
+        try {
+          map.setView([lat, lng], 16, { animate: true });
+        } catch {}
+      }
+    });
+  }, []);
+
   const runLocate = useCallback(() => {
     const map = mapRef.current;
+
     if (!map || !mapReady) {
       pendingLocateRef.current = true;
+      setGeoStatus("Chargement carte…");
       return;
     }
 
@@ -336,20 +355,32 @@ export default function MapClient() {
 
     setGeoStatus("Recherche GPS…");
 
+    // Important on mobile: Leaflet must know its size before setView
     try {
-      map.locate({
-        setView: true, // ✅ Leaflet recenters itself
-        maxZoom: 16,
-        enableHighAccuracy: true,
-        timeout: 8000,
-        maximumAge: 0,
-      });
+      map.invalidateSize();
+    } catch {}
+
+    const opts: L.LocateOptions = {
+      setView: true,
+      maxZoom: 16,
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    };
+
+    try {
+      map.locate(opts);
+      // ✅ Second attempt after a small delay (mobile timing)
+      window.setTimeout(() => {
+        try {
+          map.locate(opts);
+        } catch {}
+      }, 350);
     } catch {
       setGeoStatus("Impossible d’activer le GPS.");
     }
   }, [mapReady]);
 
-  // attach Leaflet events once map is ready
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
@@ -361,7 +392,10 @@ export default function MapClient() {
       setMe({ lat, lng });
       setGeoStatus("Position détectée ✅");
 
-      // open popup a moment later (marker mount)
+      // ✅ Force center & zoom (the missing piece on many mobiles)
+      forceGoToMe(lat, lng);
+
+      // optional: open popup once marker exists
       window.setTimeout(() => {
         try {
           meMarkerRef.current?.openPopup();
@@ -370,7 +404,6 @@ export default function MapClient() {
     };
 
     const onError = (e: L.ErrorEvent & { message?: string }) => {
-      // Often iOS returns generic error; keep message short.
       setMe(null);
       setGeoStatus(e?.message ? `GPS: ${e.message}` : "GPS indisponible.");
     };
@@ -378,24 +411,21 @@ export default function MapClient() {
     map.on("locationfound", onFound);
     map.on("locationerror", onError);
 
-    // if user clicked "autour de moi" before map ready
     if (pendingLocateRef.current) {
-      window.setTimeout(() => runLocate(), 50);
+      window.setTimeout(() => runLocate(), 80);
     }
 
     return () => {
       map.off("locationfound", onFound);
       map.off("locationerror", onError);
     };
-  }, [mapReady, runLocate]);
+  }, [mapReady, runLocate, forceGoToMe]);
 
   const locateMe = () => {
-    // ✅ Use Leaflet locate (recenter + reliable on mobile)
     runLocate();
   };
 
   const resetAroundMe = () => {
-    // small reset: removes filter but keeps UI minimal
     setMe(null);
     setGeoStatus("");
     setRadiusKm(2);
@@ -476,10 +506,8 @@ export default function MapClient() {
   const btnPrimary = `${UI.btnBase} ${UI.btnPrimary}`;
   const btnGhost = `${UI.btnBase} ${UI.btnGhost}`;
 
-  // popup CTA: force white
   const popupCtaClass = `${UI.btnBase} ${UI.btnPrimary} w-full justify-center !text-white`;
 
-  // Mobile: fullscreen map - navbar
   const mobileMapHeight = "calc(100dvh - 64px)";
 
   const onMapReady = useCallback(() => {
@@ -520,7 +548,6 @@ export default function MapClient() {
               📍 Autour de moi
             </button>
 
-            {/* tiny reset (doesn't take space) */}
             <button
               type="button"
               className={[UI.btnBase, UI.btnGhost, "px-3 py-2 rounded-full"].join(" ")}
@@ -597,9 +624,7 @@ export default function MapClient() {
             </div>
 
             {searchError ? (
-              <p className="mt-2 text-sm text-rose-700">
-                Erreur : {searchError}
-              </p>
+              <p className="mt-2 text-sm text-rose-700">Erreur : {searchError}</p>
             ) : null}
 
             {searchOpen && searchItems.length > 0 ? (
@@ -623,9 +648,7 @@ export default function MapClient() {
                       setSearchOpen(false);
                     }}
                   >
-                    <div className="font-medium text-slate-900">
-                      📍 {it.displayName}
-                    </div>
+                    <div className="font-medium text-slate-900">📍 {it.displayName}</div>
                     <div className="text-xs text-slate-500">
                       {it.lat.toFixed(5)} · {it.lng.toFixed(5)}
                     </div>
@@ -684,9 +707,7 @@ export default function MapClient() {
               {loading ? "…" : "Rafraîchir"}
             </button>
 
-            {geoStatus ? (
-              <span className={`${UI.subtle} text-xs`}>{geoStatus}</span>
-            ) : null}
+            {geoStatus ? <span className={`${UI.subtle} text-xs`}>{geoStatus}</span> : null}
           </div>
         </section>
 
@@ -720,20 +741,14 @@ export default function MapClient() {
                   >
                     <Popup autoPan closeButton>
                       <div className="text-xs w-[180px] space-y-1">
-                        <div className="font-semibold text-sm text-slate-900">
-                          Vous
-                        </div>
+                        <div className="font-semibold text-sm text-slate-900">Vous</div>
                         <div className="text-slate-600">Position actuelle</div>
                       </div>
                     </Popup>
                   </Marker>
 
                   {radiusKm > 0 ? (
-                    <Circle
-                      center={[me.lat, me.lng]}
-                      radius={radiusKm * 1000}
-                      pathOptions={{}}
-                    />
+                    <Circle center={[me.lat, me.lng]} radius={radiusKm * 1000} pathOptions={{}} />
                   ) : null}
                 </>
               ) : null}
@@ -746,24 +761,18 @@ export default function MapClient() {
                   ref={(r) => {
                     markerRefs.current[p.id] = r as unknown as L.Marker | null;
                   }}
-                  eventHandlers={{
-                    click: () => focusParking(p.id),
-                  }}
+                  eventHandlers={{ click: () => focusParking(p.id) }}
                 >
                   <Popup autoPan closeButton>
                     <div className="text-xs w-[220px] space-y-1">
-                      <div className="font-semibold text-sm leading-tight text-slate-900">
-                        {p.title}
-                      </div>
+                      <div className="font-semibold text-sm leading-tight text-slate-900">{p.title}</div>
 
                       <div className="text-slate-600 leading-snug">
                         {formatAddress(p) || "Adresse non renseignée"}
                       </div>
 
                       {p.price_hour !== null ? (
-                        <div className="text-violet-700 font-semibold">
-                          {p.price_hour} CHF / h
-                        </div>
+                        <div className="text-violet-700 font-semibold">{p.price_hour} CHF / h</div>
                       ) : null}
 
                       <div className="pt-2">
@@ -785,8 +794,7 @@ export default function MapClient() {
           <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
             <div className="flex items-center justify-between mb-3">
               <div className="font-medium text-sm text-slate-900">
-                Places disponibles{" "}
-                <span className={UI.subtle}>({visibleRows.length})</span>
+                Places disponibles <span className={UI.subtle}>({visibleRows.length})</span>
               </div>
 
               <button className={btnGhost} onClick={load} disabled={loading}>
@@ -812,11 +820,7 @@ export default function MapClient() {
                       <div className="w-28 h-20 bg-slate-100 shrink-0">
                         {photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={photo}
-                            alt=""
-                            className="w-full h-full object-cover"
-                          />
+                          <img src={photo} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
                             —
@@ -826,9 +830,7 @@ export default function MapClient() {
 
                       <div className="p-4 flex-1">
                         <div className="flex justify-between gap-3">
-                          <div className="font-medium text-slate-900">
-                            {p.title}
-                          </div>
+                          <div className="font-medium text-slate-900">{p.title}</div>
                           {p.price_hour !== null && (
                             <div className="text-sm whitespace-nowrap font-semibold text-violet-700">
                               {p.price_hour} CHF/h
@@ -856,9 +858,7 @@ export default function MapClient() {
               })}
 
               {!loading && visibleRows.length === 0 && (
-                <p className="text-sm text-slate-600">
-                  Aucune place trouvée pour ce rayon.
-                </p>
+                <p className="text-sm text-slate-600">Aucune place trouvée pour ce rayon.</p>
               )}
             </div>
           </section>
@@ -891,20 +891,14 @@ export default function MapClient() {
                     >
                       <Popup autoPan closeButton>
                         <div className="text-xs w-[180px] space-y-1">
-                          <div className="font-semibold text-sm text-slate-900">
-                            Vous
-                          </div>
+                          <div className="font-semibold text-sm text-slate-900">Vous</div>
                           <div className="text-slate-600">Position actuelle</div>
                         </div>
                       </Popup>
                     </Marker>
 
                     {radiusKm > 0 ? (
-                      <Circle
-                        center={[me.lat, me.lng]}
-                        radius={radiusKm * 1000}
-                        pathOptions={{}}
-                      />
+                      <Circle center={[me.lat, me.lng]} radius={radiusKm * 1000} pathOptions={{}} />
                     ) : null}
                   </>
                 ) : null}
@@ -917,24 +911,18 @@ export default function MapClient() {
                     ref={(r) => {
                       markerRefs.current[p.id] = r as unknown as L.Marker | null;
                     }}
-                    eventHandlers={{
-                      click: () => focusParking(p.id),
-                    }}
+                    eventHandlers={{ click: () => focusParking(p.id) }}
                   >
                     <Popup autoPan closeButton>
                       <div className="text-xs w-[220px] space-y-1">
-                        <div className="font-semibold text-sm leading-tight text-slate-900">
-                          {p.title}
-                        </div>
+                        <div className="font-semibold text-sm leading-tight text-slate-900">{p.title}</div>
 
                         <div className="text-slate-600 leading-snug">
                           {formatAddress(p) || "Adresse non renseignée"}
                         </div>
 
                         {p.price_hour !== null ? (
-                          <div className="text-violet-700 font-semibold">
-                            {p.price_hour} CHF / h
-                          </div>
+                          <div className="text-violet-700 font-semibold">{p.price_hour} CHF / h</div>
                         ) : null}
 
                         <div className="pt-2">
