@@ -161,11 +161,37 @@ function userIcon() {
 /* =========================
    Map ref setter (reliable)
 ========================= */
-function MapRefSetter({ onMap }: { onMap: (m: LeafletMap) => void }) {
+function MapRefSetter({
+  onMap,
+  onReady,
+}: {
+  onMap: (m: LeafletMap) => void;
+  onReady: () => void;
+}) {
   const map = useMap();
+
   useEffect(() => {
     onMap(map);
-  }, [map, onMap]);
+
+    // Leaflet needs invalidateSize after mount / layout
+    // We do it twice (next frame + small timeout) to be rock solid on mobile.
+    requestAnimationFrame(() => {
+      try {
+        map.invalidateSize();
+      } catch {}
+      onReady();
+    });
+
+    const t = window.setTimeout(() => {
+      try {
+        map.invalidateSize();
+      } catch {}
+      onReady();
+    }, 120);
+
+    return () => window.clearTimeout(t);
+  }, [map, onMap, onReady]);
+
   return null;
 }
 
@@ -175,14 +201,43 @@ function MapRefSetter({ onMap }: { onMap: (m: LeafletMap) => void }) {
 export default function MapClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
 
-  // Leaflet map ref (reliable via MapRefSetter)
+  // Leaflet map ref
   const mapRef = useRef<LeafletMap | null>(null);
   const handleMap = useCallback((m: LeafletMap) => {
     mapRef.current = m;
   }, []);
 
+  // Map readiness + pending navigation (critical for GPS recenter reliability)
+  const [mapReady, setMapReady] = useState(false);
+  const pendingGoToRef = useRef<{ lat: number; lng: number; zoom: number } | null>(
+    null
+  );
+
+  const flushPendingGoTo = useCallback(() => {
+    const map = mapRef.current;
+    const pending = pendingGoToRef.current;
+    if (!map || !pending) return;
+
+    pendingGoToRef.current = null;
+
+    requestAnimationFrame(() => {
+      try {
+        map.invalidateSize();
+        map.setView([pending.lat, pending.lng], pending.zoom, { animate: true });
+      } catch {
+        // ignore
+      }
+    });
+  }, []);
+
+  const onMapReady = useCallback(() => {
+    setMapReady(true);
+    flushPendingGoTo();
+  }, [flushPendingGoTo]);
+
   // Popup control per marker
   const markerRefs = useRef<Record<string, L.Marker | null>>({});
+  const meMarkerRef = useRef<L.Marker | null>(null);
 
   const [rows, setRows] = useState<Parking[]>([]);
   const [loading, setLoading] = useState(false);
@@ -297,18 +352,27 @@ export default function MapClient() {
     [visibleRowsWithCoords]
   );
 
-  const goTo = useCallback((lat: number, lng: number, zoom = 15) => {
-    const map = mapRef.current;
-    if (!map) return;
-    requestAnimationFrame(() => {
-      try {
-        map.invalidateSize();
-        map.setView([lat, lng], zoom, { animate: true });
-      } catch {
-        // ignore
+  // ✅ goTo: if map not ready yet, queue it and apply once ready
+  const goTo = useCallback(
+    (lat: number, lng: number, zoom = 15) => {
+      const map = mapRef.current;
+
+      if (!map || !mapReady) {
+        pendingGoToRef.current = { lat, lng, zoom };
+        return;
       }
-    });
-  }, []);
+
+      requestAnimationFrame(() => {
+        try {
+          map.invalidateSize();
+          map.setView([lat, lng], zoom, { animate: true });
+        } catch {
+          // ignore
+        }
+      });
+    },
+    [mapReady]
+  );
 
   // Nominatim search (debounced)
   const canSearch = useMemo(() => searchQ.trim().length >= 3, [searchQ]);
@@ -370,6 +434,7 @@ export default function MapClient() {
     };
   }, [searchQ, canSearch, doSearch]);
 
+  // ✅ FIX GPS: always recenter + open "Vous" popup
   const locateMe = () => {
     setGeoStatus("");
     if (!("geolocation" in navigator)) {
@@ -383,9 +448,21 @@ export default function MapClient() {
       (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
+
         setMe({ lat, lng });
         setGeoStatus("Position détectée ✅");
+
+        // Ensure map recenter even if not ready yet
         goTo(lat, lng, 14);
+
+        // Open popup after render (marker mount)
+        window.setTimeout(() => {
+          try {
+            meMarkerRef.current?.openPopup();
+          } catch {
+            // ignore
+          }
+        }, 250);
       },
       (err) => {
         setMe(null);
@@ -410,8 +487,7 @@ export default function MapClient() {
   // ✅ Leaflet popup sometimes makes text gray: force white on CTA
   const popupCtaClass = `${UI.btnBase} ${UI.btnPrimary} w-full justify-center !text-white`;
 
-  // ✅ Mobile: map should be big (fullscreen - navbar). action bar is sticky and overlays content.
-  // NavbarClient is h-16 => 64px
+  // ✅ Mobile: map should be big (fullscreen - navbar). action bar is sticky.
   const mobileMapHeight = "calc(100dvh - 64px)";
 
   return (
@@ -432,7 +508,7 @@ export default function MapClient() {
           </div>
         </header>
 
-        {/* ✅ ACTION BAR (sticky under navbar) */}
+        {/* ✅ ACTION BAR */}
         <section
           className={[
             UI.card,
@@ -575,7 +651,7 @@ export default function MapClient() {
 
         {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
 
-        {/* ✅ MOBILE: big map only (full height) */}
+        {/* ✅ MOBILE */}
         <section className={`${UI.card} overflow-hidden lg:hidden`}>
           <div className="w-full" style={{ height: mobileMapHeight }}>
             <MapContainer
@@ -584,7 +660,7 @@ export default function MapClient() {
               style={{ height: "100%", width: "100%" }}
               scrollWheelZoom
             >
-              <MapRefSetter onMap={handleMap} />
+              <MapRefSetter onMap={handleMap} onReady={onMapReady} />
 
               <TileLayer
                 attribution="&copy; OpenStreetMap contributors"
@@ -594,7 +670,13 @@ export default function MapClient() {
               {/* Me */}
               {me ? (
                 <>
-                  <Marker position={[me.lat, me.lng]} icon={userIcon()}>
+                  <Marker
+                    position={[me.lat, me.lng]}
+                    icon={userIcon()}
+                    ref={(r) => {
+                      meMarkerRef.current = r as unknown as L.Marker | null;
+                    }}
+                  >
                     <Popup autoPan closeButton>
                       <div className="text-xs w-[180px] space-y-1">
                         <div className="font-semibold text-sm text-slate-900">
@@ -656,7 +738,7 @@ export default function MapClient() {
           </div>
         </section>
 
-        {/* ✅ DESKTOP: list left / map right */}
+        {/* ✅ DESKTOP */}
         <div className="hidden lg:grid lg:grid-cols-2 gap-4" style={{ height: 620 }}>
           {/* LIST */}
           <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
@@ -749,7 +831,7 @@ export default function MapClient() {
                 style={{ height: "100%", width: "100%" }}
                 scrollWheelZoom
               >
-                <MapRefSetter onMap={handleMap} />
+                <MapRefSetter onMap={handleMap} onReady={onMapReady} />
 
                 <TileLayer
                   attribution="&copy; OpenStreetMap contributors"
@@ -759,7 +841,13 @@ export default function MapClient() {
                 {/* Me */}
                 {me ? (
                   <>
-                    <Marker position={[me.lat, me.lng]} icon={userIcon()}>
+                    <Marker
+                      position={[me.lat, me.lng]}
+                      icon={userIcon()}
+                      ref={(r) => {
+                        meMarkerRef.current = r as unknown as L.Marker | null;
+                      }}
+                    >
                       <Popup autoPan closeButton>
                         <div className="text-xs w-[180px] space-y-1">
                           <div className="font-semibold text-sm text-slate-900">
