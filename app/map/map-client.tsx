@@ -173,7 +173,7 @@ function MapRefSetter({
   useEffect(() => {
     onMap(map);
 
-    // Invalidate size for mobile layouts (very important)
+    // Very important for mobile layout: Leaflet needs a size recalculation
     requestAnimationFrame(() => {
       try {
         map.invalidateSize();
@@ -186,7 +186,7 @@ function MapRefSetter({
         map.invalidateSize();
       } catch {}
       onReady();
-    }, 200);
+    }, 250);
 
     return () => window.clearTimeout(t);
   }, [map, onMap, onReady]);
@@ -207,34 +207,7 @@ export default function MapClient() {
 
   const [mapReady, setMapReady] = useState(false);
 
-  // If goTo called before map is ready, we queue it and apply later.
-  const pendingGoToRef = useRef<{ lat: number; lng: number; zoom: number } | null>(
-    null
-  );
-
-  const flushPendingGoTo = useCallback(() => {
-    const map = mapRef.current;
-    const pending = pendingGoToRef.current;
-    if (!map || !pending) return;
-
-    pendingGoToRef.current = null;
-
-    requestAnimationFrame(() => {
-      try {
-        map.invalidateSize();
-        map.setView([pending.lat, pending.lng], pending.zoom, { animate: true });
-      } catch {
-        // ignore
-      }
-    });
-  }, []);
-
-  const onMapReady = useCallback(() => {
-    setMapReady(true);
-    flushPendingGoTo();
-  }, [flushPendingGoTo]);
-
-  // Markers refs
+  // markers refs
   const markerRefs = useRef<Record<string, L.Marker | null>>({});
   const meMarkerRef = useRef<L.Marker | null>(null);
 
@@ -347,33 +320,96 @@ export default function MapClient() {
     [visibleRowsWithCoords]
   );
 
-  // ✅ goTo: queue if map not ready yet (mobile-safe)
-  const goTo = useCallback(
-    (lat: number, lng: number, zoom = 15) => {
-      const map = mapRef.current;
+  /* =========================
+     ✅ LEAFLET GEOLOCATION (most reliable recenter)
+  ========================= */
+  const pendingLocateRef = useRef(false);
 
-      if (!map || !mapReady) {
-        pendingGoToRef.current = { lat, lng, zoom };
-        return;
-      }
+  const runLocate = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) {
+      pendingLocateRef.current = true;
+      return;
+    }
 
-      requestAnimationFrame(() => {
-        try {
-          map.invalidateSize();
-          map.setView([lat, lng], zoom, { animate: true });
-        } catch {}
+    pendingLocateRef.current = false;
+
+    setGeoStatus("Recherche GPS…");
+
+    try {
+      map.locate({
+        setView: true, // ✅ Leaflet recenters itself
+        maxZoom: 16,
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 0,
       });
-    },
-    [mapReady]
-  );
+    } catch {
+      setGeoStatus("Impossible d’activer le GPS.");
+    }
+  }, [mapReady]);
 
-  // ✅ SUPER FIX: whenever me changes + map is ready => enforce recenter (mobile reliability)
+  // attach Leaflet events once map is ready
   useEffect(() => {
-    if (!me) return;
-    if (!mapReady) return;
-    goTo(me.lat, me.lng, 15);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me, mapReady]);
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const onFound = (e: L.LocationEvent) => {
+      const lat = e.latlng.lat;
+      const lng = e.latlng.lng;
+
+      setMe({ lat, lng });
+      setGeoStatus("Position détectée ✅");
+
+      // open popup a moment later (marker mount)
+      window.setTimeout(() => {
+        try {
+          meMarkerRef.current?.openPopup();
+        } catch {}
+      }, 250);
+    };
+
+    const onError = (e: L.ErrorEvent & { message?: string }) => {
+      // Often iOS returns generic error; keep message short.
+      setMe(null);
+      setGeoStatus(e?.message ? `GPS: ${e.message}` : "GPS indisponible.");
+    };
+
+    map.on("locationfound", onFound);
+    map.on("locationerror", onError);
+
+    // if user clicked "autour de moi" before map ready
+    if (pendingLocateRef.current) {
+      window.setTimeout(() => runLocate(), 50);
+    }
+
+    return () => {
+      map.off("locationfound", onFound);
+      map.off("locationerror", onError);
+    };
+  }, [mapReady, runLocate]);
+
+  const locateMe = () => {
+    // ✅ Use Leaflet locate (recenter + reliable on mobile)
+    runLocate();
+  };
+
+  const resetAroundMe = () => {
+    // small reset: removes filter but keeps UI minimal
+    setMe(null);
+    setGeoStatus("");
+    setRadiusKm(2);
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    requestAnimationFrame(() => {
+      try {
+        map.invalidateSize();
+        map.setView(center, 12, { animate: true });
+      } catch {}
+    });
+  };
 
   /* =========================
      Desktop search (debounced)
@@ -437,61 +473,18 @@ export default function MapClient() {
     };
   }, [searchQ, canSearch, doSearch]);
 
-  /* =========================
-     GPS
-  ========================= */
-  const locateMe = () => {
-    setGeoStatus("");
-    if (!("geolocation" in navigator)) {
-      setGeoStatus("Géolocalisation non supportée.");
-      return;
-    }
-
-    setGeoStatus("Demande d’autorisation GPS…");
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-
-        setMe({ lat, lng });
-        setGeoStatus("Position détectée ✅");
-
-        // Queue / apply immediately
-        goTo(lat, lng, 15);
-
-        // Open popup once marker is mounted
-        window.setTimeout(() => {
-          try {
-            meMarkerRef.current?.openPopup();
-          } catch {}
-        }, 250);
-      },
-      (err) => {
-        setMe(null);
-        if (err.code === 1) setGeoStatus("Autorisation refusée.");
-        else if (err.code === 2) setGeoStatus("Position indisponible.");
-        else setGeoStatus("Timeout GPS.");
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-    );
-  };
-
-  const clearMe = () => {
-    setMe(null);
-    setGeoStatus("");
-    setRadiusKm(2);
-    goTo(center[0], center[1], 12);
-  };
-
   const btnPrimary = `${UI.btnBase} ${UI.btnPrimary}`;
   const btnGhost = `${UI.btnBase} ${UI.btnGhost}`;
 
-  // Force white text in leaflet popup CTA
+  // popup CTA: force white
   const popupCtaClass = `${UI.btnBase} ${UI.btnPrimary} w-full justify-center !text-white`;
 
-  // Mobile: full screen map (minus navbar)
+  // Mobile: fullscreen map - navbar
   const mobileMapHeight = "calc(100dvh - 64px)";
+
+  const onMapReady = useCallback(() => {
+    setMapReady(true);
+  }, []);
 
   return (
     <main className={UI.page}>
@@ -511,7 +504,7 @@ export default function MapClient() {
           </div>
         </header>
 
-        {/* ✅ MOBILE MINI BAR (2 buttons only) */}
+        {/* ✅ MOBILE MINI BAR: only 2 main buttons + tiny reset */}
         <section
           className={[
             "lg:hidden",
@@ -527,6 +520,17 @@ export default function MapClient() {
               📍 Autour de moi
             </button>
 
+            {/* tiny reset (doesn't take space) */}
+            <button
+              type="button"
+              className={[UI.btnBase, UI.btnGhost, "px-3 py-2 rounded-full"].join(" ")}
+              onClick={resetAroundMe}
+              aria-label="Réinitialiser la carte"
+              title="Réinitialiser"
+            >
+              ↺
+            </button>
+
             <Link href="/parkings" className={btnGhost}>
               Vue liste
             </Link>
@@ -534,7 +538,7 @@ export default function MapClient() {
             <div className="flex-1" />
 
             {geoStatus ? (
-              <span className={`${UI.subtle} text-[11px] max-w-[45%] truncate`}>
+              <span className={`${UI.subtle} text-[11px] max-w-[44%] truncate`}>
                 {geoStatus}
               </span>
             ) : null}
@@ -607,7 +611,15 @@ export default function MapClient() {
                     className="w-full text-left px-4 py-3 text-sm hover:bg-slate-50"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
-                      goTo(it.lat, it.lng, 15);
+                      const map = mapRef.current;
+                      if (map) {
+                        requestAnimationFrame(() => {
+                          try {
+                            map.invalidateSize();
+                            map.setView([it.lat, it.lng], 15, { animate: true });
+                          } catch {}
+                        });
+                      }
                       setSearchOpen(false);
                     }}
                   >
@@ -637,7 +649,7 @@ export default function MapClient() {
               📍 Autour de moi
             </button>
 
-            <button type="button" className={btnGhost} onClick={clearMe}>
+            <button type="button" className={btnGhost} onClick={resetAroundMe}>
               Réinitialiser
             </button>
 
@@ -680,7 +692,7 @@ export default function MapClient() {
 
         {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
 
-        {/* ✅ MOBILE: big map */}
+        {/* ✅ MOBILE MAP */}
         <section className={`${UI.card} overflow-hidden lg:hidden`}>
           <div className="w-full" style={{ height: mobileMapHeight }}>
             <MapContainer
@@ -767,7 +779,7 @@ export default function MapClient() {
           </div>
         </section>
 
-        {/* ✅ DESKTOP: list left / map right */}
+        {/* ✅ DESKTOP: list + map */}
         <div className="hidden lg:grid lg:grid-cols-2 gap-4" style={{ height: 620 }}>
           {/* LIST */}
           <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
