@@ -92,7 +92,7 @@ function toPick(x: NominatimItem): GeoPick | null {
 }
 
 /* =========================
-   Icons (slightly larger for mobile visibility)
+   Icons
 ========================= */
 function carIcon() {
   const html = `
@@ -159,7 +159,7 @@ function userIcon() {
 }
 
 /* =========================
-   Map ref setter (reliable)
+   Map ref setter
 ========================= */
 function MapRefSetter({
   onMap,
@@ -173,8 +173,7 @@ function MapRefSetter({
   useEffect(() => {
     onMap(map);
 
-    // Leaflet needs invalidateSize after mount / layout
-    // We do it twice (next frame + small timeout) to be rock solid on mobile.
+    // Invalidate size for mobile layouts (very important)
     requestAnimationFrame(() => {
       try {
         map.invalidateSize();
@@ -187,7 +186,7 @@ function MapRefSetter({
         map.invalidateSize();
       } catch {}
       onReady();
-    }, 120);
+    }, 200);
 
     return () => window.clearTimeout(t);
   }, [map, onMap, onReady]);
@@ -201,14 +200,14 @@ function MapRefSetter({
 export default function MapClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
 
-  // Leaflet map ref
   const mapRef = useRef<LeafletMap | null>(null);
   const handleMap = useCallback((m: LeafletMap) => {
     mapRef.current = m;
   }, []);
 
-  // Map readiness + pending navigation (critical for GPS recenter reliability)
   const [mapReady, setMapReady] = useState(false);
+
+  // If goTo called before map is ready, we queue it and apply later.
   const pendingGoToRef = useRef<{ lat: number; lng: number; zoom: number } | null>(
     null
   );
@@ -235,7 +234,7 @@ export default function MapClient() {
     flushPendingGoTo();
   }, [flushPendingGoTo]);
 
-  // Popup control per marker
+  // Markers refs
   const markerRefs = useRef<Record<string, L.Marker | null>>({});
   const meMarkerRef = useRef<L.Marker | null>(null);
 
@@ -252,7 +251,7 @@ export default function MapClient() {
   // radius km (0 = all)
   const [radiusKm, setRadiusKm] = useState<number>(2);
 
-  // Search (Nominatim)
+  // Search (DESKTOP only)
   const [searchQ, setSearchQ] = useState("");
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -327,13 +326,11 @@ export default function MapClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Select helper: recentre + zoom + popup
   const focusParking = useCallback(
     (id: string) => {
       setSelectedId(id);
 
       const p = visibleRowsWithCoords.find((x) => x.id === id) ?? null;
-
       const mk = markerRefs.current[id];
       if (mk) mk.openPopup();
 
@@ -344,15 +341,13 @@ export default function MapClient() {
         try {
           map.invalidateSize();
           map.setView([p.lat as number, p.lng as number], 15, { animate: true });
-        } catch {
-          // ignore
-        }
+        } catch {}
       });
     },
     [visibleRowsWithCoords]
   );
 
-  // ✅ goTo: if map not ready yet, queue it and apply once ready
+  // ✅ goTo: queue if map not ready yet (mobile-safe)
   const goTo = useCallback(
     (lat: number, lng: number, zoom = 15) => {
       const map = mapRef.current;
@@ -366,15 +361,23 @@ export default function MapClient() {
         try {
           map.invalidateSize();
           map.setView([lat, lng], zoom, { animate: true });
-        } catch {
-          // ignore
-        }
+        } catch {}
       });
     },
     [mapReady]
   );
 
-  // Nominatim search (debounced)
+  // ✅ SUPER FIX: whenever me changes + map is ready => enforce recenter (mobile reliability)
+  useEffect(() => {
+    if (!me) return;
+    if (!mapReady) return;
+    goTo(me.lat, me.lng, 15);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, mapReady]);
+
+  /* =========================
+     Desktop search (debounced)
+  ========================= */
   const canSearch = useMemo(() => searchQ.trim().length >= 3, [searchQ]);
 
   const doSearch = useCallback(async (text: string) => {
@@ -434,7 +437,9 @@ export default function MapClient() {
     };
   }, [searchQ, canSearch, doSearch]);
 
-  // ✅ FIX GPS: always recenter + open "Vous" popup
+  /* =========================
+     GPS
+  ========================= */
   const locateMe = () => {
     setGeoStatus("");
     if (!("geolocation" in navigator)) {
@@ -452,16 +457,14 @@ export default function MapClient() {
         setMe({ lat, lng });
         setGeoStatus("Position détectée ✅");
 
-        // Ensure map recenter even if not ready yet
-        goTo(lat, lng, 14);
+        // Queue / apply immediately
+        goTo(lat, lng, 15);
 
-        // Open popup after render (marker mount)
+        // Open popup once marker is mounted
         window.setTimeout(() => {
           try {
             meMarkerRef.current?.openPopup();
-          } catch {
-            // ignore
-          }
+          } catch {}
         }, 250);
       },
       (err) => {
@@ -484,16 +487,16 @@ export default function MapClient() {
   const btnPrimary = `${UI.btnBase} ${UI.btnPrimary}`;
   const btnGhost = `${UI.btnBase} ${UI.btnGhost}`;
 
-  // ✅ Leaflet popup sometimes makes text gray: force white on CTA
+  // Force white text in leaflet popup CTA
   const popupCtaClass = `${UI.btnBase} ${UI.btnPrimary} w-full justify-center !text-white`;
 
-  // ✅ Mobile: map should be big (fullscreen - navbar). action bar is sticky.
+  // Mobile: full screen map (minus navbar)
   const mobileMapHeight = "calc(100dvh - 64px)";
 
   return (
     <main className={UI.page}>
-      <div className={`${UI.container} ${UI.section} space-y-4`}>
-        {/* Desktop header */}
+      <div className={`${UI.container} ${UI.section} space-y-3`}>
+        {/* DESKTOP header */}
         <header className="hidden lg:flex items-start justify-between gap-4">
           <div className="space-y-1">
             <h1 className={UI.h2}>Carte des parkings</h1>
@@ -508,9 +511,40 @@ export default function MapClient() {
           </div>
         </header>
 
-        {/* ✅ ACTION BAR */}
+        {/* ✅ MOBILE MINI BAR (2 buttons only) */}
         <section
           className={[
+            "lg:hidden",
+            UI.card,
+            "px-3 py-3",
+            "sticky z-40 top-[72px]",
+            "bg-white/85 backdrop-blur",
+            "border border-slate-200/70",
+          ].join(" ")}
+        >
+          <div className="flex items-center gap-2">
+            <button type="button" className={btnPrimary} onClick={locateMe}>
+              📍 Autour de moi
+            </button>
+
+            <Link href="/parkings" className={btnGhost}>
+              Vue liste
+            </Link>
+
+            <div className="flex-1" />
+
+            {geoStatus ? (
+              <span className={`${UI.subtle} text-[11px] max-w-[45%] truncate`}>
+                {geoStatus}
+              </span>
+            ) : null}
+          </div>
+        </section>
+
+        {/* ✅ DESKTOP ACTION BAR (full) */}
+        <section
+          className={[
+            "hidden lg:block",
             UI.card,
             UI.cardPad,
             "sticky z-40",
@@ -599,12 +633,7 @@ export default function MapClient() {
 
           {/* Actions row */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className={btnPrimary}
-              onClick={locateMe}
-              title="Trouver les places autour de moi"
-            >
+            <button type="button" className={btnPrimary} onClick={locateMe}>
               📍 Autour de moi
             </button>
 
@@ -651,7 +680,7 @@ export default function MapClient() {
 
         {error && <p className="text-sm text-rose-700">Erreur : {error}</p>}
 
-        {/* ✅ MOBILE */}
+        {/* ✅ MOBILE: big map */}
         <section className={`${UI.card} overflow-hidden lg:hidden`}>
           <div className="w-full" style={{ height: mobileMapHeight }}>
             <MapContainer
@@ -738,7 +767,7 @@ export default function MapClient() {
           </div>
         </section>
 
-        {/* ✅ DESKTOP */}
+        {/* ✅ DESKTOP: list left / map right */}
         <div className="hidden lg:grid lg:grid-cols-2 gap-4" style={{ height: 620 }}>
           {/* LIST */}
           <section className={`${UI.card} ${UI.cardPad} overflow-auto`}>
