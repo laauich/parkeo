@@ -5,6 +5,7 @@ import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 import { useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
+import { useUnreadCount } from "@/app/hooks/useUnreadCount";
 
 export default function NavbarClient() {
   const { ready, session, signOut } = useAuth();
@@ -12,6 +13,8 @@ export default function NavbarClient() {
 
   const pathname = usePathname();
   const email = useMemo(() => session?.user?.email ?? null, [session]);
+
+  const { unreadCount, badge } = useUnreadCount();
 
   const isActive = (href: string) =>
     pathname === href || (href !== "/" && pathname?.startsWith(href));
@@ -27,6 +30,17 @@ export default function NavbarClient() {
 
   const btnPrimaryPill = [UI.btnBase, UI.btnPrimary, "rounded-full"].join(" ");
   const btnGhostPill = [UI.btnBase, UI.btnGhost, "rounded-full"].join(" ");
+
+  const MessagesLabel = (
+    <span className="inline-flex items-center gap-2">
+      Messages
+      {unreadCount > 0 ? (
+        <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full text-xs font-semibold bg-violet-600 text-white">
+          {badge}
+        </span>
+      ) : null}
+    </span>
+  );
 
   return (
     <header
@@ -61,14 +75,14 @@ export default function NavbarClient() {
             <Link className={navClass("/parkings")} href="/parkings">
               Parkings
             </Link>
+            <Link className={navClass("/messages")} href="/messages">
+              {MessagesLabel}
+            </Link>
             <Link className={navClass("/my-bookings")} href="/my-bookings">
               Réservations
             </Link>
             <Link className={navClass("/my-parkings")} href="/my-parkings">
               Mes places
-            </Link>
-            <Link className={navClass("/messages")} href="/messages">
-              Messages
             </Link>
           </nav>
         </div>
@@ -112,52 +126,24 @@ export default function NavbarClient() {
       {open && (
         <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
           <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
-            <Link
-              className={navClass("/map")}
-              href="/map"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/map")} href="/map" onClick={() => setOpen(false)}>
               Carte
             </Link>
-            <Link
-              className={navClass("/parkings")}
-              href="/parkings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/parkings")} href="/parkings" onClick={() => setOpen(false)}>
               Parkings
             </Link>
-            <Link
-              className={navClass("/my-bookings")}
-              href="/my-bookings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/messages")} href="/messages" onClick={() => setOpen(false)}>
+              {MessagesLabel}
+            </Link>
+            <Link className={navClass("/my-bookings")} href="/my-bookings" onClick={() => setOpen(false)}>
               Réservations
             </Link>
-            <Link
-              className={navClass("/my-parkings")}
-              href="/my-parkings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/my-parkings")} href="/my-parkings" onClick={() => setOpen(false)}>
               Mes places
-            </Link>
-            <Link
-              className={navClass("/messages")}
-              href="/messages"
-              onClick={() => setOpen(false)}
-            >
-              Messages
-              <Link className={navClass("/messages")} href="/messages">
-  Messages
-</Link>
-
             </Link>
 
             <div className="pt-2 flex flex-col gap-2">
-              <Link
-                href="/parkings/new"
-                className={btnPrimaryPill}
-                onClick={() => setOpen(false)}
-              >
+              <Link href="/parkings/new" className={btnPrimaryPill} onClick={() => setOpen(false)}>
                 Proposer ma place
               </Link>
 
@@ -180,11 +166,7 @@ export default function NavbarClient() {
                   </button>
                 </>
               ) : (
-                <Link
-                  href="/login"
-                  className={btnGhostPill}
-                  onClick={() => setOpen(false)}
-                >
+                <Link href="/login" className={btnGhostPill} onClick={() => setOpen(false)}>
                   Se connecter
                 </Link>
               )}

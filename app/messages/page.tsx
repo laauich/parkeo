@@ -5,56 +5,45 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 
-type ParkingMini = {
-  title: string | null;
-  address: string | null;
-};
-
-type ConversationRow = {
+type ConvRow = {
   id: string;
   booking_id: string | null;
   parking_id: string | null;
   owner_id: string;
   client_id: string;
-  created_at: string | null;
   last_message_at: string | null;
-  parkings?: ParkingMini[] | ParkingMini | null; // join parfois array
+  last_read_owner_at: string | null;
+  last_read_client_at: string | null;
+  created_at: string | null;
+  parkings?: { title: string | null; address: string | null }[] | { title: string | null; address: string | null } | null;
 };
 
-type MessageRow = {
-  id: string;
-  conversation_id: string;
-  body: string;
-  sender_id: string;
-  created_at: string;
-};
-
-function getParkingFromJoin(join: ConversationRow["parkings"]): ParkingMini | null {
+function getParkingFromJoin(join: ConvRow["parkings"]) {
   if (!join) return null;
   if (Array.isArray(join)) return join[0] ?? null;
   return join;
 }
 
-function fmtShort(iso?: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("fr-CH", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+function isUnread(c: ConvRow, userId: string) {
+  if (!c.last_message_at) return false;
+  const lm = new Date(c.last_message_at).getTime();
+  const isOwner = c.owner_id === userId;
+  const lr = isOwner ? c.last_read_owner_at : c.last_read_client_at;
+  const lrMs = lr ? new Date(lr).getTime() : 0;
+  return lm > lrMs;
 }
 
 export default function MessagesPage() {
   const { ready, session, supabase } = useAuth();
   const userId = session?.user?.id ?? null;
 
-  const [rows, setRows] = useState<ConversationRow[]>([]);
-  const [lastByConv, setLastByConv] = useState<Record<string, MessageRow | null>>({});
+  const [rows, setRows] = useState<ConvRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const load = async () => {
     if (!userId) {
       setRows([]);
-      setLastByConv({});
       setLoading(false);
       return;
     }
@@ -71,69 +60,60 @@ export default function MessagesPage() {
         parking_id,
         owner_id,
         client_id,
-        created_at,
         last_message_at,
+        last_read_owner_at,
+        last_read_client_at,
+        created_at,
         parkings:parking_id ( title, address )
       `
       )
       .or(`owner_id.eq.${userId},client_id.eq.${userId}`)
-      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .order("last_message_at", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(200);
 
     if (error) {
       setErr(error.message);
       setRows([]);
-      setLastByConv({});
       setLoading(false);
       return;
     }
 
-    const convs = (data ?? []) as unknown as ConversationRow[];
-    setRows(convs);
-
-    // last message preview (simple)
-    const ids = convs.map((c) => c.id);
-    if (ids.length === 0) {
-      setLastByConv({});
-      setLoading(false);
-      return;
-    }
-
-    const { data: msgs, error: mErr } = await supabase
-      .from("messages")
-      .select("id,conversation_id,body,sender_id,created_at")
-      .in("conversation_id", ids)
-      .order("created_at", { ascending: false })
-      .limit(200);
-
-    if (mErr) {
-      // si table pas créée/RLS pas ok, on ne bloque pas la page
-      setLastByConv({});
-      setLoading(false);
-      return;
-    }
-
-    const map: Record<string, MessageRow | null> = {};
-    for (const id of ids) map[id] = null;
-    for (const m of (msgs ?? []) as MessageRow[]) {
-      if (!map[m.conversation_id]) map[m.conversation_id] = m;
-    }
-    setLastByConv(map);
-
+    setRows((data ?? []) as unknown as ConvRow[]);
     setLoading(false);
   };
 
   useEffect(() => {
     if (!ready) return;
+    if (!session) {
+      setLoading(false);
+      return;
+    }
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, userId]);
+  }, [ready, session?.user?.id]);
 
-  const title = useMemo(() => {
-    if (!session) return "Messages";
-    return "Messages";
-  }, [session]);
+  // Realtime: si un message arrive, on reload la liste (simple et fiable MVP)
+  useEffect(() => {
+    if (!session) return;
+
+    const ch = supabase
+      .channel("messages-list")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, () => {
+        void load();
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(ch);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, session?.user?.id]);
+
+  const unreadCount = useMemo(() => {
+    if (!userId) return 0;
+    return rows.filter((c) => isUnread(c, userId)).length;
+  }, [rows, userId]);
 
   if (!ready) {
     return (
@@ -152,10 +132,8 @@ export default function MessagesPage() {
       <main className={UI.page}>
         <div className={`${UI.container} ${UI.section}`}>
           <div className={`${UI.card} ${UI.cardPad} space-y-4`}>
-            <div>
-              <h1 className={UI.h1}>{title}</h1>
-              <p className={UI.p}>Connecte-toi pour accéder à tes conversations.</p>
-            </div>
+            <h1 className={UI.h1}>Messages</h1>
+            <p className={UI.p}>Connecte-toi pour accéder aux conversations.</p>
             <Link href="/login" className={`${UI.btnBase} ${UI.btnPrimary}`}>
               Se connecter
             </Link>
@@ -170,18 +148,18 @@ export default function MessagesPage() {
       <div className={`${UI.container} ${UI.section} space-y-6`}>
         <div className={UI.sectionTitleRow}>
           <div>
-            <h1 className={UI.h1}>{title}</h1>
-            <p className={UI.p}>Tes conversations avec propriétaires / clients.</p>
+            <h1 className={UI.h1}>Messages</h1>
+            <p className={UI.p}>
+              Tes conversations ({rows.length}){" "}
+              {unreadCount > 0 ? (
+                <span className="text-slate-500">• {unreadCount} non lu(s)</span>
+              ) : null}
+            </p>
           </div>
 
-          <div className="flex gap-2">
-            <button className={`${UI.btnBase} ${UI.btnGhost}`} onClick={load} disabled={loading}>
-              {loading ? "…" : "Rafraîchir"}
-            </button>
-            <Link href="/map" className={`${UI.btnBase} ${UI.btnPrimary}`}>
-              Voir la carte
-            </Link>
-          </div>
+          <button className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => void load()} disabled={loading}>
+            {loading ? "…" : "Rafraîchir"}
+          </button>
         </div>
 
         {err ? (
@@ -195,56 +173,42 @@ export default function MessagesPage() {
             <p className={UI.p}>Chargement…</p>
           </div>
         ) : rows.length === 0 ? (
-          <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
-            <h2 className={UI.h2}>Aucune conversation</h2>
-            <p className={UI.p}>
-              Les chats apparaissent automatiquement quand tu cliques sur “Chat” depuis une réservation.
-            </p>
-            <Link href="/my-bookings" className={`${UI.btnBase} ${UI.btnPrimary}`}>
-              Voir mes réservations
-            </Link>
+          <div className={`${UI.card} ${UI.cardPad}`}>
+            <p className={UI.p}>Aucune conversation pour le moment.</p>
           </div>
         ) : (
-          <div className="grid gap-4">
+          <div className="grid gap-3">
             {rows.map((c) => {
-              const p = getParkingFromJoin(c.parkings);
-              const last = lastByConv[c.id];
-              const isOwner = userId === c.owner_id;
+              const parking = getParkingFromJoin(c.parkings ?? null);
+              const unread = userId ? isUnread(c, userId) : false;
 
               return (
                 <Link
                   key={c.id}
                   href={`/messages/${c.id}`}
-                  className={`${UI.card} ${UI.cardHover} ${UI.cardPad} block`}
+                  className={[UI.card, UI.cardPad, UI.cardHover, "block"].join(" ")}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="font-semibold text-slate-900 truncate">
-                        {p?.title ?? "Conversation"}
+                        {parking?.title ?? "Conversation"}
                       </div>
                       <div className="mt-1 text-xs text-slate-600 truncate">
-                        {p?.address ?? (c.parking_id ? `Parking: ${c.parking_id}` : "—")}
+                        {parking?.address ?? "—"}
                       </div>
-
-                      <div className="mt-3 text-sm text-slate-700 line-clamp-2">
-                        {last?.body ? last.body : "Aucun message pour l’instant."}
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className={UI.chip}>
-                          {isOwner ? "Owner" : "Client"}
-                        </span>
-                        {c.booking_id ? <span className={UI.chip}>Booking lié</span> : null}
+                      <div className="mt-2 text-xs text-slate-500">
+                        Conversation: <span className="font-mono">{c.id}</span>
                       </div>
                     </div>
 
-                    <div className="shrink-0 text-right">
-                      <div className="text-xs text-slate-500">
-                        {fmtShort(c.last_message_at || c.created_at)}
-                      </div>
-                      <div className="mt-2 text-violet-700 text-sm font-semibold">
-                        Ouvrir →
-                      </div>
+                    <div className="shrink-0 flex flex-col items-end gap-2">
+                      {unread ? (
+                        <span className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-violet-600 text-white">
+                          Non lu
+                        </span>
+                      ) : (
+                        <span className={`${UI.chip} bg-slate-50`}>Lu</span>
+                      )}
                     </div>
                   </div>
                 </Link>
