@@ -1,3 +1,4 @@
+// app/api/conversations/read/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -16,7 +17,8 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
-// POST { conversationId }
+type Body = { conversationId?: string };
+
 export async function POST(req: Request) {
   try {
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
@@ -28,11 +30,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = (await req.json().catch(() => ({}))) as { conversationId?: string };
-    if (!body.conversationId) {
+    const body = (await req.json().catch(() => ({}))) as Body;
+    const conversationId = body.conversationId?.trim();
+    if (!conversationId) {
       return NextResponse.json({ ok: false, error: "conversationId manquant" }, { status: 400 });
     }
 
+    // 1) verifier l'user via le token (RLS auth)
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
@@ -43,19 +47,25 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    // 2) utiliser service role pour updater la conversation (sécurisé + simple)
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
 
+    // charge conversation pour savoir si user est owner ou client
     const { data: c, error: cErr } = await admin
       .from("conversations")
       .select("id, owner_id, client_id")
-      .eq("id", body.conversationId)
+      .eq("id", conversationId)
       .maybeSingle();
 
     if (cErr) return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
     if (!c) return NextResponse.json({ ok: false, error: "Conversation not found" }, { status: 404 });
 
-    const isOwner = u.user.id === c.owner_id;
-    const isClient = u.user.id === c.client_id;
+    const userId = u.user.id;
+    const isOwner = c.owner_id === userId;
+    const isClient = c.client_id === userId;
+
     if (!isOwner && !isClient) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     }
@@ -64,7 +74,11 @@ export async function POST(req: Request) {
       ? { last_read_owner_at: new Date().toISOString() }
       : { last_read_client_at: new Date().toISOString() };
 
-    const { error: upErr } = await admin.from("conversations").update(patch).eq("id", c.id);
+    const { error: upErr } = await admin
+      .from("conversations")
+      .update(patch)
+      .eq("id", conversationId);
+
     if (upErr) return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
 
     return NextResponse.json({ ok: true }, { status: 200 });
