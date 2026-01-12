@@ -6,12 +6,12 @@ import { UI } from "@/app/components/ui";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default function MyParkingBookingsPage({
+export default async function MyParkingBookingsPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const { id } = params;
+  const { id } = await params;
 
   return (
     <main className={UI.page}>

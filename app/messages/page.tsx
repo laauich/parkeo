@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 
@@ -15,7 +15,10 @@ type ConvRow = {
   last_read_owner_at: string | null;
   last_read_client_at: string | null;
   created_at: string | null;
-  parkings?: { title: string | null; address: string | null }[] | { title: string | null; address: string | null } | null;
+  parkings?:
+    | { title: string | null; address: string | null }[]
+    | { title: string | null; address: string | null }
+    | null;
 };
 
 function getParkingFromJoin(join: ConvRow["parkings"]) {
@@ -41,9 +44,14 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const load = async () => {
-    if (!userId) {
+  const load = useCallback(async () => {
+    // ✅ Centralise toute la logique loading ici (pas dans useEffect)
+    if (!ready) return;
+
+    // ✅ Pas connecté => état stable, sans setState dans l'effet
+    if (!session || !userId) {
       setRows([]);
+      setErr(null);
       setLoading(false);
       return;
     }
@@ -81,34 +89,99 @@ export default function MessagesPage() {
 
     setRows((data ?? []) as unknown as ConvRow[]);
     setLoading(false);
-  };
+  }, [supabase, ready, session, userId]);
 
+  // initial load
   useEffect(() => {
     if (!ready) return;
-    if (!session) {
-      setLoading(false);
-      return;
-    }
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, session?.user?.id]);
+    // ✅ pas de setState ici
+    queueMicrotask(() => {
+      void load();
+    });
+  }, [ready, load]);
 
-  // Realtime: si un message arrive, on reload la liste (simple et fiable MVP)
+  // ✅ BroadcastChannel: maj instantanée quand tu lis/envoies (dans l'app)
+  useEffect(() => {
+    if (!session) return;
+
+    const bc =
+      typeof window !== "undefined"
+        ? new BroadcastChannel("parkeo-unread")
+        : null;
+
+    const onMsg = () => {
+      void load();
+    };
+
+    bc?.addEventListener("message", onMsg);
+
+    return () => {
+      bc?.removeEventListener("message", onMsg);
+      bc?.close();
+    };
+  }, [session, load]);
+
+  // ✅ Realtime: nouveaux messages => reload list
   useEffect(() => {
     if (!session) return;
 
     const ch = supabase
-      .channel("messages-list")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, () => {
-        void load();
-      })
+      .channel("messages-list:messages")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        () => {
+          void load();
+        }
+      )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(ch);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, session?.user?.id]);
+  }, [supabase, session, load]);
+
+  // ✅ Realtime: conversations UPDATE/INSERT (read state + last_message_at)
+  useEffect(() => {
+    if (!session || !userId) return;
+
+    const chOwner = supabase
+      .channel(`messages-list:conv-owner:${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "conversations",
+          filter: `owner_id=eq.${userId}`,
+        },
+        () => {
+          void load();
+        }
+      )
+      .subscribe();
+
+    const chClient = supabase
+      .channel(`messages-list:conv-client:${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "conversations",
+          filter: `client_id=eq.${userId}`,
+        },
+        () => {
+          void load();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(chOwner);
+      void supabase.removeChannel(chClient);
+    };
+  }, [supabase, session, userId, load]);
 
   const unreadCount = useMemo(() => {
     if (!userId) return 0;
@@ -157,7 +230,11 @@ export default function MessagesPage() {
             </p>
           </div>
 
-          <button className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => void load()} disabled={loading}>
+          <button
+            className={`${UI.btnBase} ${UI.btnGhost}`}
+            onClick={() => void load()}
+            disabled={loading}
+          >
             {loading ? "…" : "Rafraîchir"}
           </button>
         </div>
@@ -186,7 +263,9 @@ export default function MessagesPage() {
                 <Link
                   key={c.id}
                   href={`/messages/${c.id}`}
-                  className={[UI.card, UI.cardPad, UI.cardHover, "block"].join(" ")}
+                  className={[UI.card, UI.cardPad, UI.cardHover, "block"].join(
+                    " "
+                  )}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -195,9 +274,6 @@ export default function MessagesPage() {
                       </div>
                       <div className="mt-1 text-xs text-slate-600 truncate">
                         {parking?.address ?? "—"}
-                      </div>
-                      <div className="mt-2 text-xs text-slate-500">
-                        Conversation: <span className="font-mono">{c.id}</span>
                       </div>
                     </div>
 

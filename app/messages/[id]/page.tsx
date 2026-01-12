@@ -67,6 +67,9 @@ export default function MessageThreadPage() {
   const scrollToBottom = (smooth = true) =>
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
 
+  const bc =
+    typeof window !== "undefined" ? new BroadcastChannel("parkeo-unread") : null;
+
   const amOwner = useMemo(() => {
     if (!conv || !userId) return false;
     return conv.owner_id === userId;
@@ -77,7 +80,10 @@ export default function MessageThreadPage() {
     return conv.owner_id === userId || conv.client_id === userId;
   }, [conv, userId]);
 
-  const otherLabel = useMemo(() => (amOwner ? "Client" : "Propriétaire"), [amOwner]);
+  const otherLabel = useMemo(
+    () => (amOwner ? "Client" : "Propriétaire"),
+    [amOwner]
+  );
 
   const markRead = async () => {
     if (!session) return;
@@ -90,6 +96,8 @@ export default function MessageThreadPage() {
         },
         body: JSON.stringify({ conversationId: id }),
       });
+      // ✅ force refresh badge/list instantly (same app)
+      bc?.postMessage({ t: "refresh" });
     } catch {
       // ignore
     }
@@ -140,7 +148,7 @@ export default function MessageThreadPage() {
     setConv(convRow);
 
     const { data: m, error: mErr } = await supabase
-      .from("messages") // ✅ PLURIEL
+      .from("messages")
       .select("id,conversation_id,sender_id,body,created_at")
       .eq("conversation_id", id)
       .order("created_at", { ascending: true });
@@ -155,7 +163,6 @@ export default function MessageThreadPage() {
     setRows((m ?? []) as MessageRow[]);
     setLoading(false);
 
-    // mark as read + scroll
     void markRead();
     setTimeout(() => scrollToBottom(false), 30);
   };
@@ -187,9 +194,7 @@ export default function MessageThreadPage() {
             return [...prev, msg].sort((a, b) => a.created_at.localeCompare(b.created_at));
           });
 
-          // update read if message is from other party and user is currently on thread
           void markRead();
-
           setTimeout(() => scrollToBottom(true), 30);
         }
       )
@@ -198,7 +203,8 @@ export default function MessageThreadPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [supabase, id, session]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, id, session]);
 
   const send = async () => {
     if (!session || !userId) return;
@@ -206,7 +212,6 @@ export default function MessageThreadPage() {
     const body = sanitizeBasic(text);
     if (!body) return;
 
-    // UI block
     if (containsEmailOrPhone(body)) {
       setErr("Pour votre sécurité, merci de ne pas partager email ou numéro de téléphone dans le chat.");
       return;
@@ -215,7 +220,6 @@ export default function MessageThreadPage() {
     setSending(true);
     setErr(null);
 
-    // Optimistic
     const optimisticId = `optimistic-${Date.now()}`;
     const optimistic: MessageRow = {
       id: optimisticId,
@@ -252,7 +256,6 @@ export default function MessageThreadPage() {
         return;
       }
 
-      // replace optimistic with real
       setRows((prev) =>
         prev
           .filter((x) => x.id !== optimisticId)
@@ -262,12 +265,22 @@ export default function MessageThreadPage() {
 
       setSending(false);
       void markRead();
+
+      // ✅ refresh navbar/list now
+      bc?.postMessage({ t: "refresh" });
     } catch (e: unknown) {
       setRows((prev) => prev.filter((x) => x.id !== optimisticId));
       setErr(e instanceof Error ? e.message : "Erreur envoi");
       setSending(false);
     }
   };
+
+  useEffect(() => {
+    return () => {
+      bc?.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!ready) {
     return (

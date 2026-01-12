@@ -11,7 +11,7 @@ type ParkingRow = {
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    "https://parkeo.vercel.app";
+    "https://parkeo.ch";
 
   const now = new Date();
 
