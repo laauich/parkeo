@@ -6,12 +6,12 @@ import { UI } from "@/app/components/ui";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function MyParkingBookingsPage({
+export default function MyParkingBookingsPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }) {
-  const { id } = await params;
+  const { id } = params;
 
   return (
     <main className={UI.page}>
@@ -26,7 +26,10 @@ export default async function MyParkingBookingsPage({
           </div>
 
           <div className="flex items-center gap-2">
-            <Link href={`/parkings/${id}`} className={`${UI.btnBase} ${UI.btnGhost}`}>
+            <Link
+              href={`/parkings/${id}`}
+              className={`${UI.btnBase} ${UI.btnGhost}`}
+            >
               Ouvrir la place
             </Link>
             <Link href="/my-parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>

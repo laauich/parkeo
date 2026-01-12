@@ -2,6 +2,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
@@ -21,6 +22,10 @@ type BookingRow = {
 type CancelOk = { ok: true; refunded?: boolean; already?: boolean };
 type CancelErr = { ok: false; error: string; detail?: string };
 type CancelApiResponse = CancelOk | CancelErr;
+
+type EnsureChatOk = { ok: true; conversationId: string };
+type EnsureChatErr = { ok: false; error: string };
+type EnsureChatResponse = EnsureChatOk | EnsureChatErr;
 
 function formatDateTime(iso: string) {
   try {
@@ -51,10 +56,14 @@ function ownerSummary(b: BookingRow) {
 
 export default function BookingsClient({ parkingId }: { parkingId: string }) {
   const { ready, session, supabase } = useAuth();
+  const router = useRouter();
 
   const [rows, setRows] = useState<BookingRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Chat state
+  const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -187,6 +196,41 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
     [rows, nowMs]
   );
 
+  // ✅ Ouvrir / Créer le chat pour une réservation
+  const openChat = async (bookingId: string) => {
+    if (!session) return;
+
+    setChatLoadingId(bookingId);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/conversations/ensure", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ bookingId }),
+      });
+
+      const json = (await res.json().catch(() => ({}))) as EnsureChatResponse;
+
+      if (!res.ok || !("ok" in json) || json.ok === false) {
+        const msg =
+          ("error" in json && json.error) || `Erreur chat (${res.status})`;
+        setError(msg);
+        setChatLoadingId(null);
+        return;
+      }
+
+      router.push(`/messages/${json.conversationId}`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Erreur inconnue (chat)");
+    } finally {
+      setChatLoadingId(null);
+    }
+  };
+
   // UI helpers (uniformiser sans toucher à ta base)
   const Btn = {
     primary: `${UI.btnBase} ${UI.btnPrimary}`,
@@ -230,6 +274,11 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
           <Link href="/my-parkings" className={Btn.ghost}>
             Mes places
           </Link>
+
+          <Link href="/messages" className={Btn.ghost} title="Voir tous les messages">
+            Messages
+          </Link>
+
           <button className={Btn.ghost} onClick={load} disabled={loading}>
             {loading ? "…" : "Rafraîchir"}
           </button>
@@ -294,7 +343,17 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
               </b>
             </div>
 
-            <div className="mt-4 flex items-center justify-end">
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                className={Btn.primary}
+                disabled={!session || chatLoadingId === b.id}
+                onClick={() => openChat(b.id)}
+                title="Ouvrir le chat avec le client"
+              >
+                {chatLoadingId === b.id ? "…" : "💬 Chat"}
+              </button>
+
               <button
                 type="button"
                 className={Btn.danger}
@@ -347,6 +406,18 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
               <b className="text-slate-900">
                 {b.total_price} {b.currency ?? "CHF"}
               </b>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end">
+              <button
+                type="button"
+                className={Btn.primary}
+                disabled={!session || chatLoadingId === b.id}
+                onClick={() => openChat(b.id)}
+                title="Ouvrir le chat avec le client"
+              >
+                {chatLoadingId === b.id ? "…" : "💬 Chat"}
+              </button>
             </div>
           </div>
         ))}

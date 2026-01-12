@@ -36,13 +36,9 @@ export default function NavbarClient() {
         "bg-white/70 backdrop-blur-xl",
         "shadow-sm",
         "relative",
-
-        // halo violet premium
         "before:absolute before:inset-x-0 before:top-0 before:h-16",
         "before:bg-gradient-to-r before:from-violet-200/60 before:via-white/30 before:to-violet-200/60",
         "before:pointer-events-none before:-z-10",
-
-        // fine accent line
         "after:absolute after:inset-x-0 after:bottom-0 after:h-px",
         "after:bg-gradient-to-r after:from-transparent after:via-violet-300/60 after:to-transparent",
       ].join(" ")}
@@ -71,6 +67,9 @@ export default function NavbarClient() {
             <Link className={navClass("/my-parkings")} href="/my-parkings">
               Mes places
             </Link>
+            <Link className={navClass("/messages")} href="/messages">
+              Messages
+            </Link>
           </nav>
         </div>
 
@@ -87,11 +86,7 @@ export default function NavbarClient() {
               <span className="text-xs text-slate-500 max-w-[220px] truncate bg-white/60 px-3 py-1.5 rounded-full border border-slate-200/70">
                 {email}
               </span>
-              <button
-                type="button"
-                className={btnGhostPill}
-                onClick={signOut}
-              >
+              <button type="button" className={btnGhostPill} onClick={signOut}>
                 Se déconnecter
               </button>
             </>
@@ -117,17 +112,44 @@ export default function NavbarClient() {
       {open && (
         <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
           <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
-            <Link className={navClass("/map")} href="/map" onClick={() => setOpen(false)}>
+            <Link
+              className={navClass("/map")}
+              href="/map"
+              onClick={() => setOpen(false)}
+            >
               Carte
             </Link>
-            <Link className={navClass("/parkings")} href="/parkings" onClick={() => setOpen(false)}>
+            <Link
+              className={navClass("/parkings")}
+              href="/parkings"
+              onClick={() => setOpen(false)}
+            >
               Parkings
             </Link>
-            <Link className={navClass("/my-bookings")} href="/my-bookings" onClick={() => setOpen(false)}>
+            <Link
+              className={navClass("/my-bookings")}
+              href="/my-bookings"
+              onClick={() => setOpen(false)}
+            >
               Réservations
             </Link>
-            <Link className={navClass("/my-parkings")} href="/my-parkings" onClick={() => setOpen(false)}>
+            <Link
+              className={navClass("/my-parkings")}
+              href="/my-parkings"
+              onClick={() => setOpen(false)}
+            >
               Mes places
+            </Link>
+            <Link
+              className={navClass("/messages")}
+              href="/messages"
+              onClick={() => setOpen(false)}
+            >
+              Messages
+              <Link className={navClass("/messages")} href="/messages">
+  Messages
+</Link>
+
             </Link>
 
             <div className="pt-2 flex flex-col gap-2">
@@ -158,7 +180,11 @@ export default function NavbarClient() {
                   </button>
                 </>
               ) : (
-                <Link href="/login" className={btnGhostPill} onClick={() => setOpen(false)}>
+                <Link
+                  href="/login"
+                  className={btnGhostPill}
+                  onClick={() => setOpen(false)}
+                >
                   Se connecter
                 </Link>
               )}

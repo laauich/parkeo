@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
+import { useRouter } from "next/navigation";
+
 
 type ParkingJoin = {
   id: string;
@@ -157,6 +159,29 @@ type CancelApiResponse =
 
 export default function MyBookingsPage() {
   const { ready, session, supabase } = useAuth();
+  const router = useRouter();
+
+const openChatForBooking = async (bookingId: string) => {
+  if (!session) return;
+
+  const res = await fetch("/api/conversations/ensure", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ bookingId }),
+  });
+
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; conversationId?: string; error?: string };
+  if (!res.ok || !json.ok || !json.conversationId) {
+    alert(json.error ?? `Erreur chat (${res.status})`);
+    return;
+  }
+
+  router.push(`/messages/${json.conversationId}`);
+};
+
 
   const [rows, setRows] = useState<BookingRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -464,6 +489,13 @@ export default function MyBookingsPage() {
                           >
                             Voir la place
                           </Link>
+                          <button
+    type="button"
+    className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+    onClick={() => void openChatForBooking(b.id)}
+  >
+    Chat
+  </button>
 
                           <button
                             type="button"
@@ -478,6 +510,8 @@ export default function MyBookingsPage() {
                         </div>
                       </div>
                     </div>
+                    
+
                   );
                 })}
               </div>
