@@ -1,6 +1,8 @@
 // app/api/messages/send/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import NewMessageEmail from "@/app/emails/NewMessageEmail";
+import { resend, getFromEmail, getAppUrl } from "@/app/lib/resend";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +28,11 @@ type Body = {
 function sanitizeBasic(input: string) {
   const s = input.replace(/\s+/g, " ").trim();
   return s.slice(0, 2000);
+}
+
+function emailPreview(text: string) {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > 140 ? `${t.slice(0, 140)}…` : t;
 }
 
 export async function POST(req: Request) {
@@ -59,13 +66,14 @@ export async function POST(req: Request) {
     if (uErr || !u.user) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
+    const userId = u.user.id;
 
     // Admin
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
 
-    // Vérifie que l'utilisateur a accès à la conversation
+    // Vérifie accès + récup owner/client
     const { data: c, error: cErr } = await admin
       .from("conversations")
       .select("id, owner_id, client_id")
@@ -75,12 +83,13 @@ export async function POST(req: Request) {
     if (cErr) return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
     if (!c) return NextResponse.json({ ok: false, error: "Conversation not found" }, { status: 404 });
 
-    const userId = u.user.id;
     const allowed = c.owner_id === userId || c.client_id === userId;
     if (!allowed) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-    // Insert message
-    // ✅ grâce à l'index unique (conversation_id, client_nonce), pas de doublon si retry
+    const recipientId = c.owner_id === userId ? c.client_id : c.owner_id;
+    const fromLabel = c.owner_id === userId ? "Propriétaire" : "Client";
+
+    // Insert message (idempotent via nonce)
     const { data: m, error: mErr } = await admin
       .from("messages")
       .insert({
@@ -92,9 +101,10 @@ export async function POST(req: Request) {
       .select("id, conversation_id, sender_id, body, created_at, client_nonce")
       .maybeSingle();
 
+    // Duplicate nonce => on renvoie l'existant SANS renvoyer email
     if (mErr) {
-      // si violation d'unicité nonce, on récupère le message existant
-      if (String(mErr.message || "").toLowerCase().includes("duplicate")) {
+      const msg = String(mErr.message || "").toLowerCase();
+      if (clientNonce && msg.includes("duplicate")) {
         const { data: existing } = await admin
           .from("messages")
           .select("id, conversation_id, sender_id, body, created_at, client_nonce")
@@ -102,13 +112,36 @@ export async function POST(req: Request) {
           .eq("client_nonce", clientNonce)
           .maybeSingle();
 
-        if (existing) return NextResponse.json({ ok: true, message: existing }, { status: 200 });
+        if (existing) {
+          return NextResponse.json({ ok: true, message: existing }, { status: 200 });
+        }
       }
-
       return NextResponse.json({ ok: false, error: mErr.message }, { status: 500 });
     }
 
     if (!m) return NextResponse.json({ ok: false, error: "Insert failed" }, { status: 500 });
+
+    // Email recipient (best effort)
+    const recipient = await admin.auth.admin.getUserById(recipientId);
+    const toEmail = recipient.data?.user?.email ?? null;
+
+    if (toEmail) {
+      const from = getFromEmail();
+      const appUrl = getAppUrl();
+
+      await resend.emails.send({
+        from,
+        to: [toEmail],
+        subject: "Nouveau message — Parkeo",
+        react: NewMessageEmail({
+          toEmail,
+          fromLabel,
+          preview: emailPreview(text),
+          conversationId,
+          appUrl,
+        }),
+      });
+    }
 
     return NextResponse.json({ ok: true, message: m }, { status: 200 });
   } catch (e: unknown) {

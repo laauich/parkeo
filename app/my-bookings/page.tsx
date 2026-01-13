@@ -1,11 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 import { useRouter } from "next/navigation";
-
 
 type ParkingJoin = {
   id: string;
@@ -96,9 +95,7 @@ function StatusChip({ b }: { b: BookingRow }) {
 
   if (s === "confirmed" && pay === "paid") {
     return (
-      <span
-        className={`${UI.chip} bg-emerald-50 border-emerald-200 text-emerald-700`}
-      >
+      <span className={`${UI.chip} bg-emerald-50 border-emerald-200 text-emerald-700`}>
         Confirmée
       </span>
     );
@@ -123,7 +120,6 @@ function StatusChip({ b }: { b: BookingRow }) {
 /** ✅ Règle simple UI (avant annulation) :
  * - Remboursable si annulation >= 24h avant le début
  * - Sinon non remboursable
- * (tu peux ajuster ensuite si tu veux une règle plus fine)
  */
 function refundPolicyLabel(startIso: string) {
   const start = new Date(startIso).getTime();
@@ -161,27 +157,16 @@ export default function MyBookingsPage() {
   const { ready, session, supabase } = useAuth();
   const router = useRouter();
 
-const openChatForBooking = async (bookingId: string) => {
-  if (!session) return;
-
-  const res = await fetch("/api/conversations/ensure", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify({ bookingId }),
-  });
-
-  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; conversationId?: string; error?: string };
-  if (!res.ok || !json.ok || !json.conversationId) {
-    alert(json.error ?? `Erreur chat (${res.status})`);
-    return;
-  }
-
-  router.push(`/messages/${json.conversationId}`);
-};
-
+  // ✅ BroadcastChannel créé une seule fois
+  const bcRef = useRef<BroadcastChannel | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    bcRef.current = new BroadcastChannel("parkeo-unread");
+    return () => {
+      bcRef.current?.close();
+      bcRef.current = null;
+    };
+  }, []);
 
   const [rows, setRows] = useState<BookingRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,13 +174,13 @@ const openChatForBooking = async (bookingId: string) => {
 
   const [openBooking, setOpenBooking] = useState<BookingRow | null>(null);
 
-  // ✅ ajout minimal (annulation dans la modale)
+  // ✅ annulation dans la modale
   const [cancelLoading, setCancelLoading] = useState(false);
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
 
   const userId = session?.user?.id ?? null;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!userId) return;
 
     setLoading(true);
@@ -241,7 +226,7 @@ const openChatForBooking = async (bookingId: string) => {
 
     setRows((data ?? []) as unknown as BookingRow[]);
     setLoading(false);
-  };
+  }, [supabase, userId]);
 
   useEffect(() => {
     if (!ready) return;
@@ -250,8 +235,39 @@ const openChatForBooking = async (bookingId: string) => {
       return;
     }
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, userId]);
+  }, [ready, userId, load]);
+
+  const openChatForBooking = useCallback(
+    async (bookingId: string) => {
+      if (!session) return;
+
+      const res = await fetch("/api/conversations/ensure", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ bookingId }),
+      });
+
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        conversationId?: string;
+        error?: string;
+      };
+
+      if (!res.ok || !json.ok || !json.conversationId) {
+        alert(json.error ?? `Erreur chat (${res.status})`);
+        return;
+      }
+
+      // ✅ refresh badge/list now (same app)
+      bcRef.current?.postMessage({ t: "refresh" });
+
+      router.push(`/messages/${json.conversationId}`);
+    },
+    [router, session]
+  );
 
   const upcoming = useMemo(() => {
     const now = Date.now();
@@ -302,15 +318,12 @@ const openChatForBooking = async (bookingId: string) => {
         return;
       }
 
-      // ok
       const refunded = (json as { refunded?: boolean }).refunded;
       if (refunded) setCancelMsg("Annulation effectuée ✅ Remboursement en cours.");
       else setCancelMsg("Annulation effectuée ✅");
 
-      // refresh list
       await load();
 
-      // fermer la modale après petit délai (optionnel)
       setTimeout(() => {
         setOpenBooking(null);
         setCancelMsg(null);
@@ -384,10 +397,7 @@ const openChatForBooking = async (bookingId: string) => {
         {pageError ? (
           <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
             <p className="text-sm text-rose-700">Erreur : {pageError}</p>
-            <button
-              className={`${UI.btnBase} ${UI.btnGhost}`}
-              onClick={() => void load()}
-            >
+            <button className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => void load()}>
               Réessayer
             </button>
           </div>
@@ -401,9 +411,7 @@ const openChatForBooking = async (bookingId: string) => {
           <div className={`${UI.card} ${UI.cardPad} space-y-4`}>
             <div>
               <h2 className={UI.h2}>Aucune réservation</h2>
-              <p className={UI.p}>
-                Réserve depuis la liste ou la carte : tu les verras ici.
-              </p>
+              <p className={UI.p}>Réserve depuis la liste ou la carte : tu les verras ici.</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Link className={`${UI.btnBase} ${UI.btnPrimary}`} href="/parkings">
@@ -430,18 +438,11 @@ const openChatForBooking = async (bookingId: string) => {
                   const photo = firstPhotoUrl(photos);
 
                   return (
-                    <div
-                      key={b.id}
-                      className={`${UI.card} ${UI.cardHover} overflow-hidden`}
-                    >
+                    <div key={b.id} className={`${UI.card} ${UI.cardHover} overflow-hidden`}>
                       <div className="h-40 bg-slate-100">
                         {photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={photo}
-                            alt=""
-                            className="w-full h-full object-cover"
-                          />
+                          <img src={photo} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
                             Aucune photo
@@ -475,9 +476,7 @@ const openChatForBooking = async (bookingId: string) => {
 
                         <div className="mt-3 flex items-center justify-between text-sm">
                           <span className="text-slate-500">Total</span>
-                          <b className="text-slate-900">
-                            {money(b.total_price, b.currency)}
-                          </b>
+                          <b className="text-slate-900">{money(b.total_price, b.currency)}</b>
                         </div>
 
                         <div className={`${UI.divider} my-4`} />
@@ -489,13 +488,14 @@ const openChatForBooking = async (bookingId: string) => {
                           >
                             Voir la place
                           </Link>
+
                           <button
-    type="button"
-    className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
-    onClick={() => void openChatForBooking(b.id)}
-  >
-    Chat
-  </button>
+                            type="button"
+                            className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+                            onClick={() => void openChatForBooking(b.id)}
+                          >
+                            Chat
+                          </button>
 
                           <button
                             type="button"
@@ -510,15 +510,11 @@ const openChatForBooking = async (bookingId: string) => {
                         </div>
                       </div>
                     </div>
-                    
-
                   );
                 })}
               </div>
 
-              {upcoming.length === 0 ? (
-                <p className={UI.p}>Aucune réservation à venir.</p>
-              ) : null}
+              {upcoming.length === 0 ? <p className={UI.p}>Aucune réservation à venir.</p> : null}
             </section>
 
             {/* Passées */}
@@ -543,11 +539,7 @@ const openChatForBooking = async (bookingId: string) => {
                         <div className="w-16 h-12 rounded-xl bg-slate-100 overflow-hidden shrink-0">
                           {photo ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={photo}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
+                            <img src={photo} alt="" className="w-full h-full object-cover" />
                           ) : null}
                         </div>
 
@@ -573,9 +565,7 @@ const openChatForBooking = async (bookingId: string) => {
                       <div className="flex items-center gap-2 justify-between sm:justify-end">
                         <div className="text-sm text-slate-700">
                           <div className="text-slate-500 text-xs">Total</div>
-                          <div className="font-semibold">
-                            {money(b.total_price, b.currency)}
-                          </div>
+                          <div className="font-semibold">{money(b.total_price, b.currency)}</div>
                         </div>
 
                         <button
@@ -589,10 +579,15 @@ const openChatForBooking = async (bookingId: string) => {
                           Détails
                         </button>
 
-                        <Link
-                          href={`/parkings/${b.parking_id}`}
+                        <button
+                          type="button"
                           className={`${UI.btnBase} ${UI.btnPrimary}`}
+                          onClick={() => void openChatForBooking(b.id)}
                         >
+                          Chat
+                        </button>
+
+                        <Link href={`/parkings/${b.parking_id}`} className={`${UI.btnBase} ${UI.btnPrimary}`}>
                           Voir la place
                         </Link>
                       </div>
@@ -601,9 +596,7 @@ const openChatForBooking = async (bookingId: string) => {
                 })}
               </div>
 
-              {past.length === 0 ? (
-                <p className={UI.p}>Aucune réservation passée.</p>
-              ) : null}
+              {past.length === 0 ? <p className={UI.p}>Aucune réservation passée.</p> : null}
             </section>
           </div>
         )}
@@ -620,9 +613,7 @@ const openChatForBooking = async (bookingId: string) => {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="text-lg font-semibold text-slate-900">
-                    Détails réservation
-                  </h2>
+                  <h2 className="text-lg font-semibold text-slate-900">Détails réservation</h2>
                   <p className={UI.subtle}>
                     ID : <span className="font-mono">{openBooking.id}</span>
                   </p>
@@ -640,7 +631,6 @@ const openChatForBooking = async (bookingId: string) => {
                 const p = getParkingFromJoin(openBooking.parkings);
                 const photos = parsePhotos(p?.photos ?? null);
                 const photo = firstPhotoUrl(photos);
-
                 const policy = refundPolicyLabel(openBooking.start_time);
 
                 return (
@@ -648,18 +638,12 @@ const openChatForBooking = async (bookingId: string) => {
                     {photo ? (
                       <div className="h-44 rounded-2xl overflow-hidden bg-slate-100">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={photo}
-                          alt=""
-                          className="w-full h-full object-cover"
-                        />
+                        <img src={photo} alt="" className="w-full h-full object-cover" />
                       </div>
                     ) : null}
 
                     <div className="flex items-center justify-between gap-2">
-                      <div className="font-semibold text-slate-900">
-                        {p?.title ?? "Place"}
-                      </div>
+                      <div className="font-semibold text-slate-900">{p?.title ?? "Place"}</div>
                       <StatusChip b={openBooking} />
                     </div>
 
@@ -671,26 +655,19 @@ const openChatForBooking = async (bookingId: string) => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-700">
                       <div>
                         <div className="text-slate-500 text-xs">Début</div>
-                        <div className="font-medium">
-                          {formatDateTime(openBooking.start_time)}
-                        </div>
+                        <div className="font-medium">{formatDateTime(openBooking.start_time)}</div>
                       </div>
                       <div>
                         <div className="text-slate-500 text-xs">Fin</div>
-                        <div className="font-medium">
-                          {formatDateTime(openBooking.end_time)}
-                        </div>
+                        <div className="font-medium">{formatDateTime(openBooking.end_time)}</div>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-slate-500">Total</span>
-                      <b className="text-slate-900">
-                        {money(openBooking.total_price, openBooking.currency)}
-                      </b>
+                      <b className="text-slate-900">{money(openBooking.total_price, openBooking.currency)}</b>
                     </div>
 
-                    {/* ✅ UI Remboursable / Non remboursable AVANT annuler */}
                     <div
                       className={`rounded-2xl border p-3 text-sm ${
                         policy.refundable
@@ -702,9 +679,7 @@ const openChatForBooking = async (bookingId: string) => {
                       <div className="text-xs mt-1 opacity-90">{policy.detail}</div>
                     </div>
 
-                    {cancelMsg ? (
-                      <p className="text-sm text-rose-700">{cancelMsg}</p>
-                    ) : null}
+                    {cancelMsg ? <p className="text-sm text-rose-700">{cancelMsg}</p> : null}
 
                     <div className="flex gap-2 pt-2">
                       <Link
@@ -715,22 +690,12 @@ const openChatForBooking = async (bookingId: string) => {
                         Ouvrir la place
                       </Link>
 
-                      {/* ✅ Remplacement EXACT de "Copier ID" -> "Annuler" */}
                       <button
                         type="button"
                         className={`${UI.btnBase} ${UI.btnDanger} flex-1`}
-                        disabled={
-                          cancelLoading ||
-                          (openBooking.status ?? "").toLowerCase() === "cancelled"
-                        }
-                        onClick={() =>
-                          cancelBooking(openBooking.id, openBooking.start_time)
-                        }
-                        title={
-                          (openBooking.status ?? "").toLowerCase() === "cancelled"
-                            ? "Déjà annulée"
-                            : ""
-                        }
+                        disabled={cancelLoading || (openBooking.status ?? "").toLowerCase() === "cancelled"}
+                        onClick={() => cancelBooking(openBooking.id, openBooking.start_time)}
+                        title={(openBooking.status ?? "").toLowerCase() === "cancelled" ? "Déjà annulée" : ""}
                       >
                         {cancelLoading ? "Annulation…" : "Annuler"}
                       </button>
