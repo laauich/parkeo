@@ -1,32 +1,42 @@
-// app/emails/NewMessageEmail.tsx
-import * as React from "react";
+import { Html, Body, Container, Text, Preview } from "@react-email/components";
 
-export default function NewMessageEmail(props: {
-  toEmail: string;
-  fromLabel: string; // "Client" ou "Propriétaire"
-  preview: string;
-  conversationId: string;
-  appUrl: string;
+export default function NewMessageEmail({
+  senderName,
+  message,
+}: {
+  senderName: string;
+  message: string;
 }) {
   return (
-    <div style={{ fontFamily: "Arial, sans-serif", lineHeight: 1.5 }}>
-      <h2>Nouveau message</h2>
-      <p>
-        Tu as reçu un nouveau message de <b>{props.fromLabel}</b>.
-      </p>
+    <Html>
+      <Preview>Nouveau message sur Parkeo</Preview>
+      <Body style={{ fontFamily: "Arial, sans-serif" }}>
+        <Container>
+          <Text>Bonjour 👋</Text>
 
-      <div style={{ padding: 12, background: "#f6f6f6", borderRadius: 8 }}>
-        <i>{props.preview}</i>
-      </div>
+          <Text>
+            <strong>{senderName}</strong> t’a envoyé un nouveau message :
+          </Text>
 
-      <p style={{ marginTop: 16 }}>
-        Ouvrir la conversation :{" "}
-        <a href={`${props.appUrl}/messages/${props.conversationId}`}>Voir le chat</a>
-      </p>
+          <Text
+            style={{
+              background: "#f4f4f5",
+              padding: "12px",
+              borderRadius: "8px",
+            }}
+          >
+            {message}
+          </Text>
 
-      <p style={{ color: "#666", fontSize: 12 }}>
-        Email envoyé à {props.toEmail}
-      </p>
-    </div>
+          <Text>
+            Connecte-toi à Parkeo pour répondre.
+          </Text>
+
+          <Text style={{ fontSize: "12px", color: "#666" }}>
+            — Parkeo
+          </Text>
+        </Container>
+      </Body>
+    </Html>
   );
 }
