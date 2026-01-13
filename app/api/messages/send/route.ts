@@ -1,3 +1,4 @@
+// app/api/messages/send/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -16,30 +17,17 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
+type Body = {
+  conversationId?: string;
+  body?: string;
+  clientNonce?: string;
+};
+
 function sanitizeBasic(input: string) {
   const s = input.replace(/\s+/g, " ").trim();
-  return s.slice(0, 1000);
+  return s.slice(0, 2000);
 }
 
-function containsEmailOrPhone(s: string) {
-  const emailRe = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-  const phoneRe = /(\+?\d[\d\s().-]{7,}\d)/;
-  return emailRe.test(s) || phoneRe.test(s);
-}
-
-// MVP in-memory rate-limit (ok pour commencer)
-const lastByUser: Record<string, number[]> = {};
-function allow(userId: string) {
-  const now = Date.now();
-  const arr = (lastByUser[userId] ?? []).filter((t) => now - t < 60_000);
-  if (arr.length >= 30) return false; // 30/min
-  if (arr.length > 0 && now - arr[arr.length - 1] < 900) return false; // 900ms min
-  arr.push(now);
-  lastByUser[userId] = arr;
-  return true;
-}
-
-// POST { conversationId, body }
 export async function POST(req: Request) {
   try {
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
@@ -49,57 +37,80 @@ export async function POST(req: Request) {
     const token = getBearerToken(req);
     if (!token) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
-    const raw = (await req.json().catch(() => ({}))) as { conversationId?: string; body?: string };
-    if (!raw.conversationId) return NextResponse.json({ ok: false, error: "conversationId manquant" }, { status: 400 });
+    const body = (await req.json().catch(() => ({}))) as Body;
+    const conversationId = body.conversationId?.trim();
+    const text = sanitizeBasic(body.body ?? "");
+    const clientNonce = body.clientNonce?.trim() || null;
 
-    const body = sanitizeBasic(raw.body ?? "");
-    if (!body) return NextResponse.json({ ok: false, error: "Message vide" }, { status: 400 });
-
-    if (containsEmailOrPhone(body)) {
-      return NextResponse.json({ ok: false, error: "Contact interdit (email/téléphone)." }, { status: 400 });
+    if (!conversationId) {
+      return NextResponse.json({ ok: false, error: "conversationId manquant" }, { status: 400 });
+    }
+    if (!text) {
+      return NextResponse.json({ ok: false, error: "Message vide" }, { status: 400 });
     }
 
+    // Auth user
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
     });
 
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-    if (uErr || !u.user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-
-    if (!allow(u.user.id)) {
-      return NextResponse.json({ ok: false, error: "Trop rapide. Ralentis un peu 🙂" }, { status: 429 });
+    if (uErr || !u.user) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    // Admin
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
 
+    // Vérifie que l'utilisateur a accès à la conversation
     const { data: c, error: cErr } = await admin
       .from("conversations")
       .select("id, owner_id, client_id")
-      .eq("id", raw.conversationId)
+      .eq("id", conversationId)
       .maybeSingle();
 
     if (cErr) return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
     if (!c) return NextResponse.json({ ok: false, error: "Conversation not found" }, { status: 404 });
 
-    const isOwner = u.user.id === c.owner_id;
-    const isClient = u.user.id === c.client_id;
-    if (!isOwner && !isClient) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    const userId = u.user.id;
+    const allowed = c.owner_id === userId || c.client_id === userId;
+    if (!allowed) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-    const nowIso = new Date().toISOString();
-
-    const { data: msg, error: mErr } = await admin
+    // Insert message
+    // ✅ grâce à l'index unique (conversation_id, client_nonce), pas de doublon si retry
+    const { data: m, error: mErr } = await admin
       .from("messages")
-      .insert({ conversation_id: c.id, sender_id: u.user.id, body })
-      .select("id,conversation_id,sender_id,body,created_at")
+      .insert({
+        conversation_id: conversationId,
+        sender_id: userId,
+        body: text,
+        client_nonce: clientNonce,
+      })
+      .select("id, conversation_id, sender_id, body, created_at, client_nonce")
       .maybeSingle();
 
-    if (mErr) return NextResponse.json({ ok: false, error: mErr.message }, { status: 500 });
+    if (mErr) {
+      // si violation d'unicité nonce, on récupère le message existant
+      if (String(mErr.message || "").toLowerCase().includes("duplicate")) {
+        const { data: existing } = await admin
+          .from("messages")
+          .select("id, conversation_id, sender_id, body, created_at, client_nonce")
+          .eq("conversation_id", conversationId)
+          .eq("client_nonce", clientNonce)
+          .maybeSingle();
 
-    // update last_message_at
-    await admin.from("conversations").update({ last_message_at: nowIso }).eq("id", c.id);
+        if (existing) return NextResponse.json({ ok: true, message: existing }, { status: 200 });
+      }
 
-    return NextResponse.json({ ok: true, message: msg }, { status: 200 });
+      return NextResponse.json({ ok: false, error: mErr.message }, { status: 500 });
+    }
+
+    if (!m) return NextResponse.json({ ok: false, error: "Insert failed" }, { status: 500 });
+
+    return NextResponse.json({ ok: true, message: m }, { status: 200 });
   } catch (e: unknown) {
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "Server error" },

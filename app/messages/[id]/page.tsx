@@ -25,6 +25,7 @@ type MessageRow = {
   sender_id: string;
   body: string;
   created_at: string;
+  client_nonce?: string | null;
 };
 
 function getParkingFromJoin(join: ConversationRow["parkings"]) {
@@ -50,6 +51,35 @@ function containsEmailOrPhone(s: string) {
   return emailRe.test(s) || phoneRe.test(s);
 }
 
+function makeNonce() {
+  // stable enough for client dedupe
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+// ✅ anti-doublon robuste :
+// - si même id => ignore
+// - si client_nonce match => remplace l'optimistic par le message réel (API ou realtime)
+function mergeMessage(prev: MessageRow[], incoming: MessageRow) {
+  if (prev.some((x) => x.id === incoming.id)) return prev;
+
+  if (incoming.client_nonce) {
+    const idx = prev.findIndex(
+      (x) => x.client_nonce && x.client_nonce === incoming.client_nonce
+    );
+    if (idx >= 0) {
+      const copy = prev.slice();
+      copy[idx] = incoming;
+      return copy;
+    }
+  }
+
+  return [...prev, incoming];
+}
+
+function sortByCreatedAt(a: MessageRow, b: MessageRow) {
+  return a.created_at.localeCompare(b.created_at);
+}
+
 export default function MessageThreadPage() {
   const { id } = useParams<{ id: string }>();
   const { ready, session, supabase } = useAuth();
@@ -67,8 +97,17 @@ export default function MessageThreadPage() {
   const scrollToBottom = (smooth = true) =>
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
 
-  const bc =
-    typeof window !== "undefined" ? new BroadcastChannel("parkeo-unread") : null;
+  // ✅ BroadcastChannel géré proprement (pas recréé à chaque render)
+  const bcRef = useRef<BroadcastChannel | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const bc = new BroadcastChannel("parkeo-unread");
+    bcRef.current = bc;
+    return () => {
+      bc.close();
+      bcRef.current = null;
+    };
+  }, []);
 
   const amOwner = useMemo(() => {
     if (!conv || !userId) return false;
@@ -85,8 +124,15 @@ export default function MessageThreadPage() {
     [amOwner]
   );
 
+  // ✅ éviter de spam le endpoint read sur chaque message
+  const lastReadAtRef = useRef<number>(0);
   const markRead = async () => {
     if (!session) return;
+
+    const now = Date.now();
+    if (now - lastReadAtRef.current < 1500) return; // throttle
+    lastReadAtRef.current = now;
+
     try {
       await fetch("/api/conversations/read", {
         method: "POST",
@@ -96,8 +142,8 @@ export default function MessageThreadPage() {
         },
         body: JSON.stringify({ conversationId: id }),
       });
-      // ✅ force refresh badge/list instantly (same app)
-      bc?.postMessage({ t: "refresh" });
+      // ✅ refresh navbar/list instantly (same app)
+      bcRef.current?.postMessage({ t: "refresh" });
     } catch {
       // ignore
     }
@@ -147,9 +193,10 @@ export default function MessageThreadPage() {
     const convRow = c as unknown as ConversationRow;
     setConv(convRow);
 
+    // ✅ IMPORTANT: on sélectionne aussi client_nonce pour pouvoir merge
     const { data: m, error: mErr } = await supabase
       .from("messages")
-      .select("id,conversation_id,sender_id,body,created_at")
+      .select("id,conversation_id,sender_id,body,created_at,client_nonce")
       .eq("conversation_id", id)
       .order("created_at", { ascending: true });
 
@@ -160,7 +207,11 @@ export default function MessageThreadPage() {
       return;
     }
 
-    setRows((m ?? []) as MessageRow[]);
+    // ✅ dedupe par id (au cas où)
+    const uniq = new Map<string, MessageRow>();
+    for (const msg of (m ?? []) as MessageRow[]) uniq.set(msg.id, msg);
+
+    setRows(Array.from(uniq.values()).sort(sortByCreatedAt));
     setLoading(false);
 
     void markRead();
@@ -177,7 +228,7 @@ export default function MessageThreadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, session?.user?.id, id]);
 
-  // ✅ Realtime INSERT sur messages
+  // ✅ Realtime INSERT sur messages (merge anti-doublon)
   useEffect(() => {
     if (!session) return;
 
@@ -185,15 +236,20 @@ export default function MessageThreadPage() {
       .channel(`messages:${id}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${id}` },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${id}`,
+        },
         (payload) => {
           const msg = payload.new as MessageRow;
 
-          setRows((prev) => {
-            if (prev.some((x) => x.id === msg.id)) return prev;
-            return [...prev, msg].sort((a, b) => a.created_at.localeCompare(b.created_at));
-          });
+          setRows((prev) =>
+            mergeMessage(prev, msg).slice().sort(sortByCreatedAt)
+          );
 
+          // si tu es déjà dans le thread, on marque lu
           void markRead();
           setTimeout(() => scrollToBottom(true), 30);
         }
@@ -213,23 +269,27 @@ export default function MessageThreadPage() {
     if (!body) return;
 
     if (containsEmailOrPhone(body)) {
-      setErr("Pour votre sécurité, merci de ne pas partager email ou numéro de téléphone dans le chat.");
+      setErr(
+        "Pour votre sécurité, merci de ne pas partager email ou numéro de téléphone dans le chat."
+      );
       return;
     }
+
+    const nonce = makeNonce();
 
     setSending(true);
     setErr(null);
 
-    const optimisticId = `optimistic-${Date.now()}`;
     const optimistic: MessageRow = {
-      id: optimisticId,
+      id: `optimistic-${nonce}`,
       conversation_id: id,
       sender_id: userId,
       body,
       created_at: new Date().toISOString(),
+      client_nonce: nonce,
     };
 
-    setRows((prev) => [...prev, optimistic]);
+    setRows((prev) => mergeMessage(prev, optimistic).slice().sort(sortByCreatedAt));
     setText("");
     setTimeout(() => scrollToBottom(true), 20);
 
@@ -240,7 +300,8 @@ export default function MessageThreadPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ conversationId: id, body }),
+        // ✅ on envoie clientNonce pour remplacer proprement l'optimistic
+        body: JSON.stringify({ conversationId: id, body, clientNonce: nonce }),
       });
 
       const json = (await res.json().catch(() => ({}))) as {
@@ -250,37 +311,28 @@ export default function MessageThreadPage() {
       };
 
       if (!res.ok || !json.ok || !json.message) {
-        setRows((prev) => prev.filter((x) => x.id !== optimisticId));
+        setRows((prev) => prev.filter((x) => x.id !== optimistic.id));
         setErr(json.error ?? `Erreur envoi (${res.status})`);
         setSending(false);
         return;
       }
 
+      // ✅ remplace l'optimistic (via client_nonce), anti-doublon même si realtime arrive aussi
       setRows((prev) =>
-        prev
-          .filter((x) => x.id !== optimisticId)
-          .concat(json.message as MessageRow)
-          .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        mergeMessage(prev, json.message as MessageRow).slice().sort(sortByCreatedAt)
       );
 
       setSending(false);
       void markRead();
 
       // ✅ refresh navbar/list now
-      bc?.postMessage({ t: "refresh" });
+      bcRef.current?.postMessage({ t: "refresh" });
     } catch (e: unknown) {
-      setRows((prev) => prev.filter((x) => x.id !== optimisticId));
+      setRows((prev) => prev.filter((x) => x.id !== optimistic.id));
       setErr(e instanceof Error ? e.message : "Erreur envoi");
       setSending(false);
     }
   };
-
-  useEffect(() => {
-    return () => {
-      bc?.close();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   if (!ready) {
     return (
@@ -319,8 +371,14 @@ export default function MessageThreadPage() {
           <div className="space-y-1">
             <h1 className={UI.h2}>Chat</h1>
             <p className={UI.p}>
-              {parking?.title ? <b className="text-slate-900">{parking.title}</b> : "Conversation"}
-              {parking?.address ? <span className="text-slate-500"> — {parking.address}</span> : null}
+              {parking?.title ? (
+                <b className="text-slate-900">{parking.title}</b>
+              ) : (
+                "Conversation"
+              )}
+              {parking?.address ? (
+                <span className="text-slate-500"> — {parking.address}</span>
+              ) : null}
             </p>
           </div>
 
@@ -354,13 +412,20 @@ export default function MessageThreadPage() {
             <section className={`${UI.card} overflow-hidden`}>
               <div className="h-[60vh] overflow-auto p-4 space-y-3 bg-white/70">
                 {rows.length === 0 ? (
-                  <p className="text-sm text-slate-600">Aucun message. Écris le premier 🙂</p>
+                  <p className="text-sm text-slate-600">
+                    Aucun message. Écris le premier 🙂
+                  </p>
                 ) : (
                   rows.map((m) => {
                     const mine = m.sender_id === userId;
 
                     return (
-                      <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                      <div
+                        key={m.id}
+                        className={`flex ${
+                          mine ? "justify-end" : "justify-start"
+                        }`}
+                      >
                         <div className="max-w-[85%]">
                           <div
                             className={[
@@ -370,7 +435,9 @@ export default function MessageThreadPage() {
                                 : "bg-slate-900 text-white border-slate-900",
                             ].join(" ")}
                           >
-                            <div className="whitespace-pre-wrap leading-relaxed">{m.body}</div>
+                            <div className="whitespace-pre-wrap leading-relaxed">
+                              {m.body}
+                            </div>
                           </div>
 
                           <div
@@ -378,11 +445,17 @@ export default function MessageThreadPage() {
                               mine ? "justify-end" : "justify-start"
                             }`}
                           >
-                            <span className={mine ? "text-violet-700" : "text-slate-700"}>
+                            <span
+                              className={
+                                mine ? "text-violet-700" : "text-slate-700"
+                              }
+                            >
                               {mine ? "Vous" : otherLabel}
                             </span>
                             <span className="text-slate-400">•</span>
-                            <span className="text-slate-500">{fmtTime(m.created_at)}</span>
+                            <span className="text-slate-500">
+                              {fmtTime(m.created_at)}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -407,6 +480,7 @@ export default function MessageThreadPage() {
                       void send();
                     }
                   }}
+                  disabled={sending}
                 />
                 <button
                   type="button"

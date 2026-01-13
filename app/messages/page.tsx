@@ -1,3 +1,4 @@
+// app/messages/page.tsx
 "use client";
 
 import Link from "next/link";
@@ -41,7 +42,7 @@ export default function MessagesPage() {
   const userId = session?.user?.id ?? null;
 
   const [rows, setRows] = useState<ConvRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -49,7 +50,7 @@ export default function MessagesPage() {
     if (!ready) return;
 
     // ✅ Pas connecté => état stable, sans setState dans l'effet
-    if (!session || !userId) {
+    if (!userId) {
       setRows([]);
       setErr(null);
       setLoading(false);
@@ -89,20 +90,17 @@ export default function MessagesPage() {
 
     setRows((data ?? []) as unknown as ConvRow[]);
     setLoading(false);
-  }, [supabase, ready, session, userId]);
+  }, [ready, userId, supabase]);
 
-  // initial load
+  // ✅ initial load (aucun setState direct dans l'effet)
   useEffect(() => {
     if (!ready) return;
-    // ✅ pas de setState ici
-    queueMicrotask(() => {
-      void load();
-    });
+    queueMicrotask(() => void load());
   }, [ready, load]);
 
-  // ✅ BroadcastChannel: maj instantanée quand tu lis/envoies (dans l'app)
+  // ✅ BroadcastChannel: maj instantanée (read/send) depuis d'autres pages
   useEffect(() => {
-    if (!session) return;
+    if (!userId) return;
 
     const bc =
       typeof window !== "undefined"
@@ -119,14 +117,14 @@ export default function MessagesPage() {
       bc?.removeEventListener("message", onMsg);
       bc?.close();
     };
-  }, [session, load]);
+  }, [userId, load]);
 
-  // ✅ Realtime: nouveaux messages => reload list
+  // ✅ Realtime: nouveaux messages => reload list (simple et fiable MVP)
   useEffect(() => {
-    if (!session) return;
+    if (!userId) return;
 
     const ch = supabase
-      .channel("messages-list:messages")
+      .channel(`messages-list:messages:${userId}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
@@ -139,11 +137,11 @@ export default function MessagesPage() {
     return () => {
       void supabase.removeChannel(ch);
     };
-  }, [supabase, session, load]);
+  }, [supabase, userId, load]);
 
   // ✅ Realtime: conversations UPDATE/INSERT (read state + last_message_at)
   useEffect(() => {
-    if (!session || !userId) return;
+    if (!userId) return;
 
     const chOwner = supabase
       .channel(`messages-list:conv-owner:${userId}`)
@@ -181,7 +179,7 @@ export default function MessagesPage() {
       void supabase.removeChannel(chOwner);
       void supabase.removeChannel(chClient);
     };
-  }, [supabase, session, userId, load]);
+  }, [supabase, userId, load]);
 
   const unreadCount = useMemo(() => {
     if (!userId) return 0;
@@ -263,9 +261,7 @@ export default function MessagesPage() {
                 <Link
                   key={c.id}
                   href={`/messages/${c.id}`}
-                  className={[UI.card, UI.cardPad, UI.cardHover, "block"].join(
-                    " "
-                  )}
+                  className={[UI.card, UI.cardPad, UI.cardHover, "block"].join(" ")}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
