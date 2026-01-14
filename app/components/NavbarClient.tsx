@@ -51,11 +51,15 @@ export default function NavbarClient() {
       if (mq.matches) setOpen(false);
     };
 
-    // ferme immédiatement si on est déjà en desktop
     onChange();
 
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    // compat Safari iOS < 14
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", onChange);
+      return () => mq.removeEventListener("change", onChange);
+    }
+    mq.addListener(onChange);
+    return () => mq.removeListener(onChange);
   }, []);
 
   return (
@@ -99,6 +103,11 @@ export default function NavbarClient() {
             </Link>
             <Link className={navClass("/my-parkings")} href="/my-parkings">
               Mes places
+            </Link>
+
+            {/* ✅ NOUVEAU: Réservations owner global */}
+            <Link className={navClass("/my-parkings/bookings")} href="/my-parkings/bookings">
+              Réservations (mes places)
             </Link>
           </nav>
         </div>
@@ -145,41 +154,30 @@ export default function NavbarClient() {
             <Link className={navClass("/map")} href="/map" onClick={() => setOpen(false)}>
               Carte
             </Link>
-            <Link
-              className={navClass("/parkings")}
-              href="/parkings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/parkings")} href="/parkings" onClick={() => setOpen(false)}>
               Parkings
             </Link>
-            <Link
-              className={navClass("/messages")}
-              href="/messages"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/messages")} href="/messages" onClick={() => setOpen(false)}>
               {MessagesLabel}
             </Link>
-            <Link
-              className={navClass("/my-bookings")}
-              href="/my-bookings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/my-bookings")} href="/my-bookings" onClick={() => setOpen(false)}>
               Réservations
             </Link>
-            <Link
-              className={navClass("/my-parkings")}
-              href="/my-parkings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/my-parkings")} href="/my-parkings" onClick={() => setOpen(false)}>
               Mes places
             </Link>
 
+            {/* ✅ NOUVEAU: Réservations owner global */}
+            <Link
+              className={navClass("/my-parkings/bookings")}
+              href="/my-parkings/bookings"
+              onClick={() => setOpen(false)}
+            >
+              Réservations (mes places)
+            </Link>
+
             <div className="pt-2 flex flex-col gap-2">
-              <Link
-                href="/parkings/new"
-                className={btnPrimaryPill}
-                onClick={() => setOpen(false)}
-              >
+              <Link href="/parkings/new" className={btnPrimaryPill} onClick={() => setOpen(false)}>
                 Proposer ma place
               </Link>
 
