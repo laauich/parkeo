@@ -13,17 +13,19 @@ export default function MobileNav({
   brand = "Parkeo",
   items,
   rightSlot,
+  mobileActions,
 }: {
   brand?: string;
   items: NavItem[];
-  rightSlot?: React.ReactNode; // ex: bouton login/logout, avatar, etc.
+  rightSlot?: React.ReactNode;     // Desktop (et à côté du bouton sur mobile)
+  mobileActions?: React.ReactNode; // ✅ Actions DANS le dropdown mobile (login/logout)
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
   const activeLabel = useMemo(() => {
     const hit = items.find(
-      (x) => pathname === x.href || (x.href !== "/" && pathname?.startsWith(x.href + "/"))
+      (x) => pathname === x.href || pathname?.startsWith(x.href + "/")
     );
     return hit?.label ?? "";
   }, [items, pathname]);
@@ -44,10 +46,7 @@ export default function MobileNav({
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-2">
             {items.map((it) => {
-              const active =
-                pathname === it.href ||
-                (it.href !== "/" && pathname?.startsWith(it.href + "/"));
-
+              const active = pathname === it.href || pathname?.startsWith(it.href + "/");
               return (
                 <Link
                   key={it.href}
@@ -66,8 +65,9 @@ export default function MobileNav({
             {rightSlot ? <div className="ml-2">{rightSlot}</div> : null}
           </nav>
 
-          {/* Mobile button */}
+          {/* Mobile */}
           <div className="md:hidden flex items-center gap-2">
+            {/* Slot à droite (ex: bouton logout/login) à côté du burger */}
             {rightSlot ? <div className="mr-1">{rightSlot}</div> : null}
 
             <button
@@ -88,15 +88,12 @@ export default function MobileNav({
           <div className="md:hidden mt-3 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div className="p-2 grid gap-1">
               {items.map((it) => {
-                const active =
-                  pathname === it.href ||
-                  (it.href !== "/" && pathname?.startsWith(it.href + "/"));
-
+                const active = pathname === it.href || pathname?.startsWith(it.href + "/");
                 return (
                   <Link
                     key={it.href}
                     href={it.href}
-                    onClick={() => setOpen(false)} // ✅ fermeture au clic
+                    onClick={() => setOpen(false)}
                     className={[
                       "px-3 py-3 rounded-xl text-sm transition",
                       active
@@ -109,6 +106,13 @@ export default function MobileNav({
                 );
               })}
             </div>
+
+            {/* ✅ Actions mobile (login/logout, etc.) */}
+            {mobileActions ? (
+              <div className="border-t border-slate-200 p-2">
+                <div onClick={() => setOpen(false)}>{mobileActions}</div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
