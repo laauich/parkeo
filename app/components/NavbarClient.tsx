@@ -42,21 +42,24 @@ export default function NavbarClient() {
     </span>
   );
 
-  // ✅ Fix responsive "safe" : si on repasse en desktop, on ferme le menu mobile
+  // Ferme le menu quand on passe en desktop (md+)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const mq = window.matchMedia("(min-width: 768px)"); // md
+    const mq = window.matchMedia("(min-width: 768px)");
     const onChange = () => {
       if (mq.matches) setOpen(false);
     };
-
-    // ferme immédiatement si on est déjà en desktop
     onChange();
 
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+
+  // Ferme le menu quand on change de page
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
 
   return (
     <header
@@ -84,6 +87,7 @@ export default function NavbarClient() {
             Parkeo
           </Link>
 
+          {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-1">
             <Link className={navClass("/map")} href="/map">
               Carte
@@ -103,7 +107,7 @@ export default function NavbarClient() {
           </nav>
         </div>
 
-        {/* Right */}
+        {/* Right (desktop) */}
         <div className="hidden md:flex items-center gap-2">
           <Link href="/parkings/new" className={btnPrimaryPill}>
             Proposer
@@ -127,7 +131,7 @@ export default function NavbarClient() {
           )}
         </div>
 
-        {/* Mobile */}
+        {/* Mobile button */}
         <button
           type="button"
           className={["md:hidden", btnGhostPill].join(" ")}
@@ -139,47 +143,40 @@ export default function NavbarClient() {
         </button>
       </div>
 
-      {open && (
-        <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
+      {/* ✅ Mobile dropdown (déroulant + overlay + animation) */}
+      <div
+        className={[
+          "md:hidden",
+          "overflow-hidden",
+          "transition-[max-height,opacity] duration-200 ease-out",
+          open ? "max-h-[520px] opacity-100" : "max-h-0 opacity-0",
+        ].join(" ")}
+      >
+        <div className="border-t border-slate-200/70 bg-white/85 backdrop-blur">
           <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
-            <Link className={navClass("/map")} href="/map" onClick={() => setOpen(false)}>
+            <Link className={navClass("/map")} href="/map">
               Carte
             </Link>
-            <Link
-              className={navClass("/parkings")}
-              href="/parkings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/parkings")} href="/parkings">
               Parkings
             </Link>
-            <Link
-              className={navClass("/messages")}
-              href="/messages"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/messages")} href="/messages">
               {MessagesLabel}
             </Link>
-            <Link
-              className={navClass("/my-bookings")}
-              href="/my-bookings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/my-bookings")} href="/my-bookings">
               Réservations
             </Link>
-            <Link
-              className={navClass("/my-parkings")}
-              href="/my-parkings"
-              onClick={() => setOpen(false)}
-            >
+            <Link className={navClass("/my-parkings")} href="/my-parkings">
               Mes places
             </Link>
 
+            {/* ✅ Ajoute ici tes pages manquantes si tu as les routes */}
+            {/* <Link className={navClass("/my-reserved-parkings")} href="/my-reserved-parkings">
+              Mes places réservées
+            </Link> */}
+
             <div className="pt-2 flex flex-col gap-2">
-              <Link
-                href="/parkings/new"
-                className={btnPrimaryPill}
-                onClick={() => setOpen(false)}
-              >
+              <Link href="/parkings/new" className={btnPrimaryPill}>
                 Proposer ma place
               </Link>
 
@@ -190,26 +187,29 @@ export default function NavbarClient() {
                   <span className="text-xs text-slate-500 truncate bg-white/60 px-3 py-1.5 rounded-full border border-slate-200/70">
                     {email}
                   </span>
-                  <button
-                    type="button"
-                    className={btnGhostPill}
-                    onClick={() => {
-                      setOpen(false);
-                      signOut();
-                    }}
-                  >
+                  <button type="button" className={btnGhostPill} onClick={signOut}>
                     Se déconnecter
                   </button>
                 </>
               ) : (
-                <Link href="/login" className={btnGhostPill} onClick={() => setOpen(false)}>
+                <Link href="/login" className={btnGhostPill}>
                   Se connecter
                 </Link>
               )}
             </div>
           </div>
         </div>
-      )}
+      </div>
+
+      {/* ✅ Overlay (click dehors pour fermer) */}
+      {open ? (
+        <button
+          type="button"
+          aria-label="Fermer le menu"
+          className="md:hidden fixed inset-0 z-40 bg-black/20"
+          onClick={() => setOpen(false)}
+        />
+      ) : null}
     </header>
   );
 }
