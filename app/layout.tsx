@@ -45,10 +45,13 @@ export default function RootLayout({
     <html lang="fr">
       <body className="min-h-screen flex flex-col">
         <AuthProvider>
+          {/* Navbar */}
           <NavbarClient />
 
-          {/* ✅ Full width + full height (le contenu prend toute la place restante sous la navbar) */}
-          <div className="flex-1 w-full">{children}</div>
+          {/* Contenu principal */}
+          <main className="flex-1 w-full">
+            {children}
+          </main>
         </AuthProvider>
       </body>
     </html>

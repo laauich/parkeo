@@ -153,3 +153,15 @@ export const UI = {
     "px-3 py-3 text-sm outline-none " +
     "focus:ring-2 focus:ring-violet-200 focus:border-violet-300",
 };
+UI.input = [
+  "w-full",
+  "rounded-xl",
+  "border border-slate-300",
+  "bg-white",
+  "text-slate-900",
+  "placeholder:text-slate-400",
+  "text-[16px] leading-6",            // IMPORTANT iOS
+  "px-3 py-2",
+  "outline-none",
+  "focus:ring-2 focus:ring-violet-400/40 focus:border-violet-400",
+].join(" ");
