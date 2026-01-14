@@ -44,12 +44,12 @@ export default function NavbarClient() {
   // ✅ items communs
   const items = [
     { href: "/map", label: "Carte" },
-    { href: "/parkings", label: "Parkings" },
-    { href: "/messages", label: MessagesLabel },
+    { href: "/parkings", label: "Parkings" },    
     { href: "/my-bookings", label: "Réservations" },
     { href: "/my-parkings", label: "Mes places" },
     // ✅ page owner globale si tu l’as créée
     { href: "/my-parkings/bookings", label: "Réservations (owners)" },
+    { href: "/messages", label: MessagesLabel },
   ];
 
   return (

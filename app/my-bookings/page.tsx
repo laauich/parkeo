@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 import { useRouter } from "next/navigation";
@@ -157,16 +157,31 @@ export default function MyBookingsPage() {
   const { ready, session, supabase } = useAuth();
   const router = useRouter();
 
-  // ✅ BroadcastChannel créé une seule fois
-  const bcRef = useRef<BroadcastChannel | null>(null);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    bcRef.current = new BroadcastChannel("parkeo-unread");
-    return () => {
-      bcRef.current?.close();
-      bcRef.current = null;
+  const openChatForBooking = async (bookingId: string) => {
+    if (!session) return;
+
+    const res = await fetch("/api/conversations/ensure", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ bookingId }),
+    });
+
+    const json = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      conversationId?: string;
+      error?: string;
     };
-  }, []);
+
+    if (!res.ok || !json.ok || !json.conversationId) {
+      alert(json.error ?? `Erreur chat (${res.status})`);
+      return;
+    }
+
+    router.push(`/messages/${json.conversationId}`);
+  };
 
   const [rows, setRows] = useState<BookingRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,13 +189,13 @@ export default function MyBookingsPage() {
 
   const [openBooking, setOpenBooking] = useState<BookingRow | null>(null);
 
-  // ✅ annulation dans la modale
+  // annulation modale
   const [cancelLoading, setCancelLoading] = useState(false);
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
 
   const userId = session?.user?.id ?? null;
 
-  const load = useCallback(async () => {
+  const load = async () => {
     if (!userId) return;
 
     setLoading(true);
@@ -226,7 +241,7 @@ export default function MyBookingsPage() {
 
     setRows((data ?? []) as unknown as BookingRow[]);
     setLoading(false);
-  }, [supabase, userId]);
+  };
 
   useEffect(() => {
     if (!ready) return;
@@ -235,39 +250,8 @@ export default function MyBookingsPage() {
       return;
     }
     void load();
-  }, [ready, userId, load]);
-
-  const openChatForBooking = useCallback(
-    async (bookingId: string) => {
-      if (!session) return;
-
-      const res = await fetch("/api/conversations/ensure", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ bookingId }),
-      });
-
-      const json = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        conversationId?: string;
-        error?: string;
-      };
-
-      if (!res.ok || !json.ok || !json.conversationId) {
-        alert(json.error ?? `Erreur chat (${res.status})`);
-        return;
-      }
-
-      // ✅ refresh badge/list now (same app)
-      bcRef.current?.postMessage({ t: "refresh" });
-
-      router.push(`/messages/${json.conversationId}`);
-    },
-    [router, session]
-  );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, userId]);
 
   const upcoming = useMemo(() => {
     const now = Date.now();
@@ -375,12 +359,13 @@ export default function MyBookingsPage() {
     <main className={UI.page}>
       <div className={`${UI.container} ${UI.section} space-y-6`}>
         <div className={UI.sectionTitleRow}>
-          <div>
+          <div className="min-w-0">
             <h1 className={UI.h1}>Mes réservations</h1>
             <p className={UI.p}>Tes réservations à venir et passées.</p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          {/* ✅ responsive: boutons qui passent en colonne sur mobile */}
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
             <button
               className={`${UI.btnBase} ${UI.btnGhost}`}
               onClick={() => void load()}
@@ -411,9 +396,11 @@ export default function MyBookingsPage() {
           <div className={`${UI.card} ${UI.cardPad} space-y-4`}>
             <div>
               <h2 className={UI.h2}>Aucune réservation</h2>
-              <p className={UI.p}>Réserve depuis la liste ou la carte : tu les verras ici.</p>
+              <p className={UI.p}>
+                Réserve depuis la liste ou la carte : tu les verras ici.
+              </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <Link className={`${UI.btnBase} ${UI.btnPrimary}`} href="/parkings">
                 Trouver une place
               </Link>
@@ -424,25 +411,33 @@ export default function MyBookingsPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* À venir */}
+            {/* ✅ À venir */}
             <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <h2 className={UI.h2}>À venir</h2>
                 <span className={UI.subtle}>{upcoming.length} réservation(s)</span>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {/* ✅ grid responsive + vraie 1 colonne sur mobile */}
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                 {upcoming.map((b) => {
                   const p = getParkingFromJoin(b.parkings);
                   const photos = parsePhotos(p?.photos ?? null);
                   const photo = firstPhotoUrl(photos);
 
                   return (
-                    <div key={b.id} className={`${UI.card} ${UI.cardHover} overflow-hidden`}>
+                    <div
+                      key={b.id}
+                      className={`${UI.card} ${UI.cardHover} overflow-hidden`}
+                    >
                       <div className="h-40 bg-slate-100">
                         {photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={photo} alt="" className="w-full h-full object-cover" />
+                          <img
+                            src={photo}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
                             Aucune photo
@@ -464,34 +459,37 @@ export default function MyBookingsPage() {
                         </div>
 
                         <div className="mt-3 space-y-1 text-sm text-slate-700">
-                          <div>
-                            <span className="text-slate-500">Début :</span>{" "}
-                            <b>{formatDateTime(b.start_time)}</b>
+                          <div className="flex flex-col">
+                            <span className="text-slate-500">Début :</span>
+                            <b className="break-words">{formatDateTime(b.start_time)}</b>
                           </div>
-                          <div>
-                            <span className="text-slate-500">Fin :</span>{" "}
-                            <b>{formatDateTime(b.end_time)}</b>
+                          <div className="flex flex-col">
+                            <span className="text-slate-500">Fin :</span>
+                            <b className="break-words">{formatDateTime(b.end_time)}</b>
                           </div>
                         </div>
 
                         <div className="mt-3 flex items-center justify-between text-sm">
                           <span className="text-slate-500">Total</span>
-                          <b className="text-slate-900">{money(b.total_price, b.currency)}</b>
+                          <b className="text-slate-900">
+                            {money(b.total_price, b.currency)}
+                          </b>
                         </div>
 
                         <div className={`${UI.divider} my-4`} />
 
-                        <div className="flex gap-2">
+                        {/* ✅ Responsive CTA: colonne mobile / ligne sm+ */}
+                        <div className="flex flex-col sm:flex-row gap-2">
                           <Link
                             href={`/parkings/${b.parking_id}`}
-                            className={`${UI.btnBase} ${UI.btnGhost} flex-1`}
+                            className={`${UI.btnBase} ${UI.btnGhost} w-full sm:flex-1`}
                           >
                             Voir la place
                           </Link>
 
                           <button
                             type="button"
-                            className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+                            className={`${UI.btnBase} ${UI.btnPrimary} w-full sm:flex-1`}
                             onClick={() => void openChatForBooking(b.id)}
                           >
                             Chat
@@ -499,7 +497,7 @@ export default function MyBookingsPage() {
 
                           <button
                             type="button"
-                            className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+                            className={`${UI.btnBase} ${UI.btnPrimary} w-full sm:flex-1`}
                             onClick={() => {
                               setCancelMsg(null);
                               setOpenBooking(b);
@@ -517,9 +515,9 @@ export default function MyBookingsPage() {
               {upcoming.length === 0 ? <p className={UI.p}>Aucune réservation à venir.</p> : null}
             </section>
 
-            {/* Passées */}
+            {/* ✅ Passées */}
             <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <h2 className={UI.h2}>Passées</h2>
                 <span className={UI.subtle}>{past.length} réservation(s)</span>
               </div>
@@ -539,7 +537,11 @@ export default function MyBookingsPage() {
                         <div className="w-16 h-12 rounded-xl bg-slate-100 overflow-hidden shrink-0">
                           {photo ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={photo} alt="" className="w-full h-full object-cover" />
+                            <img
+                              src={photo}
+                              alt=""
+                              className="w-full h-full object-cover"
+                            />
                           ) : null}
                         </div>
 
@@ -557,20 +559,23 @@ export default function MyBookingsPage() {
 
                           <div className="mt-2 text-sm text-slate-700">
                             <span className="text-slate-500">Fin :</span>{" "}
-                            <b>{formatDateTime(b.end_time)}</b>
+                            <b className="break-words">{formatDateTime(b.end_time)}</b>
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 justify-between sm:justify-end">
-                        <div className="text-sm text-slate-700">
+                      {/* ✅ responsive actions */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:justify-end w-full sm:w-auto">
+                        <div className="text-sm text-slate-700 sm:text-right">
                           <div className="text-slate-500 text-xs">Total</div>
-                          <div className="font-semibold">{money(b.total_price, b.currency)}</div>
+                          <div className="font-semibold">
+                            {money(b.total_price, b.currency)}
+                          </div>
                         </div>
 
                         <button
                           type="button"
-                          className={`${UI.btnBase} ${UI.btnGhost}`}
+                          className={`${UI.btnBase} ${UI.btnGhost} w-full sm:w-auto`}
                           onClick={() => {
                             setCancelMsg(null);
                             setOpenBooking(b);
@@ -579,15 +584,10 @@ export default function MyBookingsPage() {
                           Détails
                         </button>
 
-                        <button
-                          type="button"
-                          className={`${UI.btnBase} ${UI.btnPrimary}`}
-                          onClick={() => void openChatForBooking(b.id)}
+                        <Link
+                          href={`/parkings/${b.parking_id}`}
+                          className={`${UI.btnBase} ${UI.btnPrimary} w-full sm:w-auto`}
                         >
-                          Chat
-                        </button>
-
-                        <Link href={`/parkings/${b.parking_id}`} className={`${UI.btnBase} ${UI.btnPrimary}`}>
                           Voir la place
                         </Link>
                       </div>
@@ -601,21 +601,26 @@ export default function MyBookingsPage() {
           </div>
         )}
 
-        {/* MODALE DETAILS */}
+        {/* ✅ MODALE DETAILS responsive (scroll sur mobile) */}
         {openBooking ? (
           <div
-            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4"
             onClick={() => setOpenBooking(null)}
           >
             <div
               className={`${UI.card} ${UI.cardPad} w-full max-w-lg space-y-4`}
               onClick={(e) => e.stopPropagation()}
+              style={{
+                maxHeight: "calc(100vh - 2rem)",
+              }}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="text-lg font-semibold text-slate-900">Détails réservation</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Détails réservation
+                  </h2>
                   <p className={UI.subtle}>
-                    ID : <span className="font-mono">{openBooking.id}</span>
+                    ID : <span className="font-mono break-all">{openBooking.id}</span>
                   </p>
                 </div>
                 <button
@@ -627,82 +632,107 @@ export default function MyBookingsPage() {
                 </button>
               </div>
 
-              {(() => {
-                const p = getParkingFromJoin(openBooking.parkings);
-                const photos = parsePhotos(p?.photos ?? null);
-                const photo = firstPhotoUrl(photos);
-                const policy = refundPolicyLabel(openBooking.start_time);
+              <div className="space-y-3 overflow-auto pr-1" style={{ maxHeight: "calc(100vh - 12rem)" }}>
+                {(() => {
+                  const p = getParkingFromJoin(openBooking.parkings);
+                  const photos = parsePhotos(p?.photos ?? null);
+                  const photo = firstPhotoUrl(photos);
 
-                return (
-                  <div className="space-y-3">
-                    {photo ? (
-                      <div className="h-44 rounded-2xl overflow-hidden bg-slate-100">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={photo} alt="" className="w-full h-full object-cover" />
+                  const policy = refundPolicyLabel(openBooking.start_time);
+
+                  return (
+                    <>
+                      {photo ? (
+                        <div className="h-44 rounded-2xl overflow-hidden bg-slate-100">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={photo}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      ) : null}
+
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold text-slate-900 min-w-0 truncate">
+                          {p?.title ?? "Place"}
+                        </div>
+                        <StatusChip b={openBooking} />
                       </div>
-                    ) : null}
 
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="font-semibold text-slate-900">{p?.title ?? "Place"}</div>
-                      <StatusChip b={openBooking} />
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      <div className="text-slate-500 text-xs">Adresse</div>
-                      <div>{p?.address ?? "—"}</div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-700">
-                      <div>
-                        <div className="text-slate-500 text-xs">Début</div>
-                        <div className="font-medium">{formatDateTime(openBooking.start_time)}</div>
+                      <div className="text-sm text-slate-700">
+                        <div className="text-slate-500 text-xs">Adresse</div>
+                        <div className="break-words">{p?.address ?? "—"}</div>
                       </div>
-                      <div>
-                        <div className="text-slate-500 text-xs">Fin</div>
-                        <div className="font-medium">{formatDateTime(openBooking.end_time)}</div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-700">
+                        <div>
+                          <div className="text-slate-500 text-xs">Début</div>
+                          <div className="font-medium break-words">
+                            {formatDateTime(openBooking.start_time)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-slate-500 text-xs">Fin</div>
+                          <div className="font-medium break-words">
+                            {formatDateTime(openBooking.end_time)}
+                          </div>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500">Total</span>
-                      <b className="text-slate-900">{money(openBooking.total_price, openBooking.currency)}</b>
-                    </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-500">Total</span>
+                        <b className="text-slate-900">
+                          {money(openBooking.total_price, openBooking.currency)}
+                        </b>
+                      </div>
 
-                    <div
-                      className={`rounded-2xl border p-3 text-sm ${
-                        policy.refundable
-                          ? "border-emerald-200 bg-emerald-50/60 text-emerald-800"
-                          : "border-amber-200 bg-amber-50/60 text-amber-800"
-                      }`}
-                    >
-                      <div className="font-semibold">{policy.title}</div>
-                      <div className="text-xs mt-1 opacity-90">{policy.detail}</div>
-                    </div>
-
-                    {cancelMsg ? <p className="text-sm text-rose-700">{cancelMsg}</p> : null}
-
-                    <div className="flex gap-2 pt-2">
-                      <Link
-                        href={`/parkings/${openBooking.parking_id}`}
-                        className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
-                        onClick={() => setOpenBooking(null)}
+                      <div
+                        className={`rounded-2xl border p-3 text-sm ${
+                          policy.refundable
+                            ? "border-emerald-200 bg-emerald-50/60 text-emerald-800"
+                            : "border-amber-200 bg-amber-50/60 text-amber-800"
+                        }`}
                       >
-                        Ouvrir la place
-                      </Link>
+                        <div className="font-semibold">{policy.title}</div>
+                        <div className="text-xs mt-1 opacity-90">{policy.detail}</div>
+                      </div>
 
-                      <button
-                        type="button"
-                        className={`${UI.btnBase} ${UI.btnDanger} flex-1`}
-                        disabled={cancelLoading || (openBooking.status ?? "").toLowerCase() === "cancelled"}
-                        onClick={() => cancelBooking(openBooking.id, openBooking.start_time)}
-                        title={(openBooking.status ?? "").toLowerCase() === "cancelled" ? "Déjà annulée" : ""}
-                      >
-                        {cancelLoading ? "Annulation…" : "Annuler"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
+                      {cancelMsg ? (
+                        <p className="text-sm text-rose-700">{cancelMsg}</p>
+                      ) : null}
+
+                      {/* ✅ responsive actions */}
+                      <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                        <Link
+                          href={`/parkings/${openBooking.parking_id}`}
+                          className={`${UI.btnBase} ${UI.btnPrimary} w-full sm:flex-1`}
+                          onClick={() => setOpenBooking(null)}
+                        >
+                          Ouvrir la place
+                        </Link>
+
+                        <button
+                          type="button"
+                          className={`${UI.btnBase} ${UI.btnDanger} w-full sm:flex-1`}
+                          disabled={
+                            cancelLoading ||
+                            (openBooking.status ?? "").toLowerCase() === "cancelled"
+                          }
+                          onClick={() => cancelBooking(openBooking.id, openBooking.start_time)}
+                          title={
+                            (openBooking.status ?? "").toLowerCase() === "cancelled"
+                              ? "Déjà annulée"
+                              : ""
+                          }
+                        >
+                          {cancelLoading ? "Annulation…" : "Annuler"}
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
             </div>
           </div>
         ) : null}
