@@ -119,19 +119,19 @@ export default function NavbarClient() {
                 Carte
               </Link>
               <Link className={navClass("/parkings")} href="/parkings">
-                Parkings
+                Places disponibles
               </Link>
               <Link className={navClass("/messages")} href="/messages">
                 {MessagesLabel}
               </Link>
               <Link className={navClass("/my-bookings")} href="/my-bookings">
-                Réservations
+                Mes réservations
               </Link>
               <Link className={navClass("/my-parkings")} href="/my-parkings">
                 Mes places
               </Link>
               <Link className={navClass("/my-parkings/bookings")} href="/my-parkings/bookings">
-                Réservations (owners)
+                Mes places réservées
               </Link>
             </nav>
           </div>
