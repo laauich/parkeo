@@ -199,19 +199,29 @@ export default function NavbarClient() {
       {/* Mobile dropdown */}
       {open && (
         <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur relative z-[60]">
-    <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
-            <Link className={navClass("/map")} href="/map" onClick={closeAll}>
-              Carte
-            </Link>
-            <Link className={navClass("/parkings")} href="/parkings" onClick={closeAll}>
-              Parkings
-            </Link>
-            <Link className={navClass("/messages")} href="/messages" onClick={closeAll}>
-              {MessagesLabel}
-            </Link>
-            <Link className={navClass("/my-bookings")} href="/my-bookings" onClick={closeAll}>
-              Réservations
-            </Link>
+    <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 flex flex-col gap-2">
+            <Link
+  className={[navClass("/map"), "w-full block text-left"].join(" ")}
+  href="/map"
+  onClick={() => setOpen(false)}
+>
+  Carte
+</Link>
+<Link
+  className={[navClass("/messages"), "w-full block text-left"].join(" ")}
+  href="/messages"
+  onClick={() => setOpen(false)}
+>
+ {MessagesLabel}
+</Link>
+<Link
+  className={[navClass("/my-bookings"), "w-full block text-left"].join(" ")}
+  href="/my-bookings"
+  onClick={() => setOpen(false)}
+>
+ Réservations
+</Link>
+
 
             {/* ✅ Propriétaire dropdown (mobile) */}
             <div className="pt-1">
