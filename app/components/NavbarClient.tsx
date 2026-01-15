@@ -183,21 +183,23 @@ export default function NavbarClient() {
         </div>
 
         {/* Mobile */}
-        <button
-          type="button"
-          className={["md:hidden", btnGhostPill].join(" ")}
-          onClick={() => setOpen((v) => !v)}
-          aria-label="Menu"
-          aria-expanded={open}
-        >
-          {open ? "Fermer" : "Menu"}
-        </button>
+<button
+  type="button"
+  className={["md:hidden", btnGhostPill, "inline-flex items-center gap-2"].join(" ")}
+  onClick={() => setOpen((v) => !v)}
+  aria-label={open ? "Fermer le menu" : "Ouvrir le menu"}
+  aria-expanded={open}
+>
+  <span className="text-lg leading-none">{open ? "✕" : "☰"}</span>
+  <span className="text-sm">{open ? "Fermer" : "Menu"}</span>
+</button>
+
       </div>
 
       {/* Mobile dropdown */}
       {open && (
-        <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
-          <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
+        <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur relative z-[60]">
+    <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
             <Link className={navClass("/map")} href="/map" onClick={closeAll}>
               Carte
             </Link>
