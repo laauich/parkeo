@@ -17,9 +17,12 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
-// POST { bookingId?: string, parkingId?: string }
-// - bookingId: crée/retourne la conversation liée à ce booking (recommandé)
-// - parkingId: fallback (si tu veux faire un chat "owner" sans booking, plus tard)
+function isPast(endIso: string) {
+  const end = new Date(endIso).getTime();
+  if (Number.isNaN(end)) return false;
+  return end <= Date.now();
+}
+
 export async function POST(req: Request) {
   try {
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
@@ -32,7 +35,8 @@ export async function POST(req: Request) {
     }
 
     const body = (await req.json().catch(() => ({}))) as { bookingId?: string };
-    if (!body.bookingId) {
+    const bookingId = body.bookingId?.trim();
+    if (!bookingId) {
       return NextResponse.json({ ok: false, error: "bookingId manquant" }, { status: 400 });
     }
 
@@ -44,7 +48,7 @@ export async function POST(req: Request) {
 
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
     if (uErr || !u.user) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ ok: false, error: "Unauthorized", detail: uErr?.message ?? "No user" }, { status: 401 });
     }
 
     // Admin (service role)
@@ -52,15 +56,29 @@ export async function POST(req: Request) {
       auth: { persistSession: false },
     });
 
-    // Load booking
+    // Load booking (✅ on récupère status + end_time pour bloquer chat)
     const { data: b, error: bErr } = await admin
       .from("bookings")
-      .select("id, parking_id, user_id")
-      .eq("id", body.bookingId)
+      .select("id, parking_id, user_id, status, end_time")
+      .eq("id", bookingId)
       .maybeSingle();
 
-    if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+    if (bErr) return NextResponse.json({ ok: false, error: "DB error", detail: bErr.message }, { status: 500 });
     if (!b) return NextResponse.json({ ok: false, error: "Booking not found" }, { status: 404 });
+
+    // ✅ Bloque chat si annulée OU passée
+    if ((b.status ?? "").toLowerCase() === "cancelled") {
+      return NextResponse.json(
+        { ok: false, error: "Chat indisponible", detail: "Réservation annulée" },
+        { status: 409 }
+      );
+    }
+    if (b.end_time && isPast(b.end_time)) {
+      return NextResponse.json(
+        { ok: false, error: "Chat indisponible", detail: "Réservation passée" },
+        { status: 409 }
+      );
+    }
 
     // Load parking owner
     const { data: p, error: pErr } = await admin
@@ -69,7 +87,7 @@ export async function POST(req: Request) {
       .eq("id", b.parking_id)
       .maybeSingle();
 
-    if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
+    if (pErr) return NextResponse.json({ ok: false, error: "DB error", detail: pErr.message }, { status: 500 });
     if (!p) return NextResponse.json({ ok: false, error: "Parking not found" }, { status: 404 });
 
     // Only booking client or parking owner can ensure it
@@ -94,8 +112,10 @@ export async function POST(req: Request) {
       .select("id")
       .maybeSingle();
 
-    if (cErr) return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
-    if (!conv?.id) return NextResponse.json({ ok: false, error: "Conversation not created" }, { status: 500 });
+    if (cErr) return NextResponse.json({ ok: false, error: "DB error", detail: cErr.message }, { status: 500 });
+    if (!conv?.id) {
+      return NextResponse.json({ ok: false, error: "Conversation not created" }, { status: 500 });
+    }
 
     return NextResponse.json({ ok: true, conversationId: conv.id }, { status: 200 });
   } catch (e: unknown) {

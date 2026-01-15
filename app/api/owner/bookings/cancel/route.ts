@@ -18,15 +18,25 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
+function isPast(endIso: string) {
+  const end = new Date(endIso).getTime();
+  if (Number.isNaN(end)) return false;
+  return end <= Date.now();
+}
+
 type Body = { bookingId?: string };
 
-type ApiOk = { ok: true; refunded?: boolean; already?: boolean };
+type ApiOk = {
+  ok: true;
+  refunded?: boolean;
+  already?: boolean;
+  refund_status?: string;
+};
 type ApiErr = { ok: false; error: string; detail?: string };
 
 function jsonOk(payload: ApiOk, status = 200) {
   return NextResponse.json(payload, { status });
 }
-
 function jsonErr(error: string, status = 400, detail?: string) {
   const payload: ApiErr = { ok: false, error, ...(detail ? { detail } : {}) };
   return NextResponse.json(payload, { status });
@@ -40,9 +50,7 @@ export async function POST(req: Request) {
     const stripeKey = env("STRIPE_SECRET_KEY");
 
     const token = getBearerToken(req);
-    if (!token) {
-      return jsonErr("Unauthorized", 401, "Missing Authorization Bearer token");
-    }
+    if (!token) return jsonErr("Unauthorized", 401, "Missing Authorization Bearer token");
 
     const body = (await req.json().catch(() => ({}))) as Body;
     const bookingId = body.bookingId?.trim();
@@ -55,20 +63,18 @@ export async function POST(req: Request) {
     });
 
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-    if (uErr || !u.user) {
-      return jsonErr("Unauthorized", 401, uErr?.message ?? "No user");
-    }
+    if (uErr || !u.user) return jsonErr("Unauthorized", 401, uErr?.message ?? "No user");
 
     // Admin
     const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
 
-    // Load booking
+    // Load booking (+ end_time pour blocage)
     const { data: booking, error: bErr } = await supabaseAdmin
       .from("bookings")
       .select(
-        "id, parking_id, status, payment_status, stripe_payment_intent_id, refund_id, refund_status"
+        "id, parking_id, status, payment_status, end_time, stripe_payment_intent_id, refund_id, refund_status"
       )
       .eq("id", bookingId)
       .maybeSingle();
@@ -86,9 +92,22 @@ export async function POST(req: Request) {
     if (pErr) return jsonErr("DB error", 500, pErr.message);
     if (!p || p.owner_id !== u.user.id) return jsonErr("Forbidden", 403);
 
-    // Already cancelled
+    // ✅ Déjà annulée => idempotent ok
     if ((booking.status ?? "").toLowerCase() === "cancelled") {
-      return jsonOk({ ok: true, already: true }, 200);
+      return jsonOk(
+        {
+          ok: true,
+          already: true,
+          refunded: (booking.refund_status ?? "").toLowerCase() === "refunded",
+          refund_status: booking.refund_status ?? undefined,
+        },
+        200
+      );
+    }
+
+    // ✅ Interdit si passée
+    if (booking.end_time && isPast(booking.end_time)) {
+      return jsonErr("Annulation impossible", 409, "Réservation passée");
     }
 
     const paid = (booking.payment_status ?? "").toLowerCase() === "paid";
@@ -99,31 +118,33 @@ export async function POST(req: Request) {
       .update({
         status: "cancelled",
         cancelled_at: new Date().toISOString(),
+        cancelled_by: "owner",
         refund_status: paid ? "requested_owner" : "none",
         payment_status: paid ? "refunding" : booking.payment_status,
-        cancelled_by: "owner",
       })
       .eq("id", booking.id);
 
     if (upErr) return jsonErr("Update failed", 500, upErr.message);
 
-    // If not paid, done
-    if (!paid) return jsonOk({ ok: true, refunded: false }, 200);
+    // Not paid => done
+    if (!paid) return jsonOk({ ok: true, refunded: false, refund_status: "none" }, 200);
 
-    // Paid: need refund
-    if (!booking.stripe_payment_intent_id) {
-      // rollback best-effort to keep state coherent
-      await supabaseAdmin
-        .from("bookings")
-        .update({ refund_status: "missing_intent", payment_status: "paid" })
-        .eq("id", booking.id);
-
-      return jsonErr("Refund impossible", 500, "stripe_payment_intent_id manquant");
+    // Paid: refund flow (idempotent)
+    if (booking.refund_id || (booking.refund_status ?? "").toLowerCase() === "refunded") {
+      return jsonOk({ ok: true, refunded: true, already: true, refund_status: "refunded" }, 200);
     }
 
-    // Idempotency: if refund already exists in DB, don't recreate
-    if (booking.refund_id || booking.refund_status === "refunded") {
-      return jsonOk({ ok: true, refunded: true, already: true }, 200);
+    // ✅ Missing intent => plus de 500 : on marque missing_intent et on renvoie ok
+    if (!booking.stripe_payment_intent_id) {
+      await supabaseAdmin
+        .from("bookings")
+        .update({
+          refund_status: "missing_intent",
+          payment_status: "paid",
+        })
+        .eq("id", booking.id);
+
+      return jsonOk({ ok: true, refunded: false, refund_status: "missing_intent" }, 200);
     }
 
     const stripe = new Stripe(stripeKey);
@@ -144,17 +165,12 @@ export async function POST(req: Request) {
         .eq("id", booking.id);
 
       if (upd2Err) {
-        // Refund done at Stripe but DB not updated — return error explicite
-        return jsonErr(
-          "Refund ok but DB update failed",
-          500,
-          upd2Err.message
-        );
+        return jsonErr("Refund ok but DB update failed", 500, upd2Err.message);
       }
 
-      return jsonOk({ ok: true, refunded: true }, 200);
+      return jsonOk({ ok: true, refunded: true, refund_status: "refunded" }, 200);
     } catch (e: unknown) {
-      // Refund failed at Stripe: put booking back to paid (best effort)
+      // Refund failed at Stripe: keep cancelled but set coherent refund/payment status
       await supabaseAdmin
         .from("bookings")
         .update({

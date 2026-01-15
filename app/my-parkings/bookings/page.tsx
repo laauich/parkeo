@@ -6,11 +6,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 import { useRouter } from "next/navigation";
+import ConfirmModal from "@/app/components/ConfirmModal";
 
 type ParkingJoin = {
   id: string;
   title: string | null;
   address: string | null;
+  photos: string[] | string | null;
 };
 
 type BookingRow = {
@@ -24,7 +26,13 @@ type BookingRow = {
   status: string | null;
   payment_status: string | null;
   created_at: string | null;
-  // join parkings
+
+  // (optionnels si ta DB les a)
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  refund_status?: string | null; // refunded | requested | requested_owner | missing_intent | failed | none ...
+  refund_id?: string | null;
+
   parkings?: ParkingJoin[] | ParkingJoin | null;
 };
 
@@ -33,7 +41,7 @@ type CancelErr = { ok: false; error: string; detail?: string };
 type CancelApiResponse = CancelOk | CancelErr;
 
 type EnsureChatOk = { ok: true; conversationId: string };
-type EnsureChatErr = { ok: false; error: string };
+type EnsureChatErr = { ok: false; error: string; detail?: string };
 type EnsureChatResponse = EnsureChatOk | EnsureChatErr;
 
 function getParkingFromJoin(join: BookingRow["parkings"]): ParkingJoin | null {
@@ -60,6 +68,89 @@ function money(v: number | null, currency?: string | null) {
   return `${v} ${(currency ?? "CHF").toUpperCase()}`;
 }
 
+function parsePhotos(raw: ParkingJoin["photos"]): string[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return [];
+    if (s.startsWith("http")) return [s];
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      return [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function firstPhotoUrl(photos: string[]): string | null {
+  const u = photos[0];
+  return u ? u : null;
+}
+
+function isCancelled(b: BookingRow) {
+  return (b.status ?? "").toLowerCase() === "cancelled";
+}
+
+function isPast(b: BookingRow, nowMs: number) {
+  const end = new Date(b.end_time).getTime();
+  if (Number.isNaN(end)) return false;
+  return end <= nowMs;
+}
+
+function canChat(b: BookingRow, nowMs: number) {
+  // règle demandée: pas de chat si passé OU annulé
+  return !isCancelled(b) && !isPast(b, nowMs);
+}
+
+function canCancelOwner(b: BookingRow, nowMs: number) {
+  // règle demandée: pas d'annulation si passé OU annulé
+  return !isCancelled(b) && !isPast(b, nowMs);
+}
+
+function refundBadge(b: BookingRow) {
+  const rs = (b.refund_status ?? "").toLowerCase();
+  const paid = (b.payment_status ?? "").toLowerCase();
+
+  // Si tu n’as pas refund_status dans ta DB, on se base sur payment_status
+  if (!rs) {
+    if (paid === "refunded") return { label: "Remboursée", tone: "success" as const };
+    if (paid === "refunding") return { label: "Remboursement en cours", tone: "warning" as const };
+    return null;
+  }
+
+  if (rs === "refunded") return { label: "Remboursée", tone: "success" as const };
+  if (rs.includes("request")) return { label: "Remboursement en cours", tone: "warning" as const };
+  if (rs === "missing_intent") return { label: "Remboursement impossible", tone: "danger" as const };
+  if (rs === "failed") return { label: "Remboursement échoué", tone: "danger" as const };
+  if (rs === "none") return { label: "Aucun remboursement", tone: "info" as const };
+
+  return { label: rs, tone: "info" as const };
+}
+
+function ownerSummary(b: BookingRow) {
+  const paid = (b.payment_status ?? "").toLowerCase() === "paid";
+  if (paid) {
+    return {
+      badge: "Remboursement ✅",
+      tone: "warning" as const,
+      title: "Le client sera remboursé",
+      text: `Annulation propriétaire : remboursement automatique de ${b.total_price ?? "—"} ${
+        b.currency ?? "CHF"
+      }.`,
+    };
+  }
+  return {
+    badge: "Non payé",
+    tone: "info" as const,
+    title: "Réservation non payée",
+    text: "Annulation simple (pas de remboursement).",
+  };
+}
+
 export default function OwnerBookingsGlobalPage() {
   const { ready, session, supabase } = useAuth();
   const router = useRouter();
@@ -67,10 +158,35 @@ export default function OwnerBookingsGlobalPage() {
   const [rows, setRows] = useState<BookingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
   const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
+
+  // Détails modal
+  const [openBooking, setOpenBooking] = useState<BookingRow | null>(null);
+
+  // ConfirmModal annulation
+  const [modalOpen, setModalOpen] = useState(false);
+  const [pendingCancel, setPendingCancel] = useState<BookingRow | null>(null);
+  const [modalLines, setModalLines] = useState<string[]>([]);
+  const [modalSummary, setModalSummary] = useState<
+    { badge?: string; title?: string; text?: string } | undefined
+  >(undefined);
+  const [modalTone, setModalTone] = useState<"success" | "warning" | "danger" | "info">("info");
+
+  // ✅ éviter double click / "2 fois"
   const [cancelLoadingId, setCancelLoadingId] = useState<string | null>(null);
 
+  // évite ConfirmModal derrière Détails
+  const [returnToDetails, setReturnToDetails] = useState<BookingRow | null>(null);
+
   const userId = session?.user?.id ?? null;
+
+  // ✅ éviter Date.now dans render + même logique partout
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const load = async () => {
     if (!ready) return;
@@ -85,13 +201,7 @@ export default function OwnerBookingsGlobalPage() {
     setLoading(true);
     setErr(null);
 
-    // ⚠️ IMPORTANT :
-    // - On affiche TOUTES les réservations (bookings) dont le parking appartient au user (owner).
-    // - On fait un join sur parkings pour afficher le titre/adresse.
-    // - Il faut que ta table parkings ait bien une colonne owner_id (ou user_id côté owner).
-    //
-    // Si chez toi la colonne s'appelle "user_id" au lieu de "owner_id",
-    // remplace `.eq("parkings.owner_id", userId)` par `.eq("parkings.user_id", userId)`.
+    // ⚠️ IMPORTANT: si chez toi c’est parkings.user_id au lieu de owner_id => remplace ci-dessous.
     const { data, error } = await supabase
       .from("bookings")
       .select(
@@ -106,10 +216,13 @@ export default function OwnerBookingsGlobalPage() {
         status,
         payment_status,
         created_at,
-        parkings:parking_id ( id, title, address, owner_id )
+        cancelled_at,
+        cancelled_by,
+        refund_status,
+        refund_id,
+        parkings:parking_id ( id, title, address, photos, owner_id )
       `
       )
-      // filtre par propriétaire via la table join
       .eq("parkings.owner_id", userId)
       .order("start_time", { ascending: false })
       .limit(500);
@@ -121,7 +234,6 @@ export default function OwnerBookingsGlobalPage() {
       return;
     }
 
-    // Certains setups renvoient parkings comme array même en 1-1
     setRows((data ?? []) as unknown as BookingRow[]);
     setLoading(false);
   };
@@ -133,24 +245,24 @@ export default function OwnerBookingsGlobalPage() {
   }, [ready, session?.user?.id]);
 
   const upcoming = useMemo(() => {
-    const now = Date.now();
-    return rows.filter((b) => {
-      const startMs = new Date(b.start_time).getTime();
-      return startMs > now && (b.status ?? "").toLowerCase() !== "cancelled";
-    });
-  }, [rows]);
+    return rows.filter((b) => !isPast(b, nowMs));
+  }, [rows, nowMs]);
 
   const past = useMemo(() => {
-    const now = Date.now();
-    return rows.filter((b) => {
-      const startMs = new Date(b.start_time).getTime();
-      return startMs <= now || (b.status ?? "").toLowerCase() === "cancelled";
-    });
-  }, [rows]);
+    return rows.filter((b) => isPast(b, nowMs));
+  }, [rows, nowMs]);
 
   const openChat = async (bookingId: string) => {
     if (!session) return;
 
+    // ✅ blocage UI (et évite spam clic)
+    const b = rows.find((x) => x.id === bookingId) ?? openBooking;
+    if (b && !canChat(b, nowMs)) {
+      setErr("Chat indisponible : réservation passée ou annulée.");
+      return;
+    }
+
+    if (chatLoadingId) return; // évite double click pendant chargement
     setChatLoadingId(bookingId);
     setErr(null);
 
@@ -167,10 +279,14 @@ export default function OwnerBookingsGlobalPage() {
       const json = (await res.json().catch(() => ({}))) as EnsureChatResponse;
 
       if (!res.ok || !("ok" in json) || json.ok === false) {
+        // ✅ affiche detail si présent
         const msg =
-          ("error" in json && json.error) || `Erreur chat (${res.status})`;
+          ("detail" in json && json.detail)
+            ? `${json.error ?? "Erreur chat"} — ${json.detail}`
+            : ("error" in json && json.error)
+              ? json.error
+              : `Erreur chat (${res.status})`;
         setErr(msg);
-        setChatLoadingId(null);
         return;
       }
 
@@ -182,12 +298,47 @@ export default function OwnerBookingsGlobalPage() {
     }
   };
 
-  const cancelOwner = async (bookingId: string) => {
-    if (!session) return;
+  const openOwnerCancelModal = (b: BookingRow) => {
+    setErr(null);
 
-    if (!window.confirm("Confirmer l’annulation propriétaire ?")) return;
+    // ✅ blocage UI (pas d'annulation si passée/annulée)
+    if (!canCancelOwner(b, nowMs)) {
+      setErr("Annulation impossible : réservation passée ou déjà annulée.");
+      return;
+    }
 
-    setCancelLoadingId(bookingId);
+    const s = ownerSummary(b);
+
+    // ferme Détails pour éviter modal derrière
+    if (openBooking) {
+      setReturnToDetails(openBooking);
+      setOpenBooking(null);
+    } else {
+      setReturnToDetails(b);
+    }
+
+    setPendingCancel(b);
+    setModalSummary({ badge: s.badge, title: s.title, text: s.text });
+    setModalTone(s.tone);
+
+    setModalLines([
+      `Début : ${formatDateTime(b.start_time)}`,
+      `Fin : ${formatDateTime(b.end_time)}`,
+      `Prix : ${money(b.total_price, b.currency)}`,
+      `Paiement : ${b.payment_status ?? "—"}`,
+      "",
+      "Confirmer l’annulation ?",
+    ]);
+
+    setModalOpen(true);
+  };
+
+  const doCancelOwner = async () => {
+    if (!session || !pendingCancel) return;
+
+    // ✅ évite double submit
+    if (cancelLoadingId) return;
+    setCancelLoadingId(pendingCancel.id);
     setErr(null);
 
     try {
@@ -197,24 +348,38 @@ export default function OwnerBookingsGlobalPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ bookingId }),
+        body: JSON.stringify({ bookingId: pendingCancel.id }),
       });
 
       const json = (await res.json().catch(() => ({}))) as CancelApiResponse;
 
       if (!res.ok || !("ok" in json) || json.ok === false) {
         const msg =
-          ("error" in json ? json.error : null) ??
-          `Erreur annulation (${res.status})`;
-        const detail = "detail" in json ? json.detail : undefined;
-        setErr(detail ? `${msg} — ${detail}` : msg);
-        setCancelLoadingId(null);
+          ("detail" in json && json.detail)
+            ? `${json.error ?? "Erreur annulation"} — ${json.detail}`
+            : ("error" in json && json.error)
+              ? json.error
+              : `Erreur annulation (${res.status})`;
+
+        setErr(msg);
+
+        // on ferme le ConfirmModal mais on peut retourner au détail si l’utilisateur veut
+        setModalOpen(false);
+        setPendingCancel(null);
         return;
       }
 
       await load();
+
+      // après annulation confirmée : on ne rouvre pas détails automatiquement
+      setReturnToDetails(null);
+
+      setModalOpen(false);
+      setPendingCancel(null);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Erreur inconnue (annulation)");
+      setModalOpen(false);
+      setPendingCancel(null);
     } finally {
       setCancelLoadingId(null);
     }
@@ -258,13 +423,36 @@ export default function OwnerBookingsGlobalPage() {
 
   return (
     <main className={UI.page}>
+      <ConfirmModal
+        open={modalOpen}
+        title="Annuler (propriétaire)"
+        lines={modalLines}
+        summary={modalSummary}
+        summaryTone={modalTone}
+        confirmLabel="Confirmer l’annulation"
+        cancelLabel="Retour"
+        danger
+        loading={!!cancelLoadingId}
+        onClose={() => {
+          if (cancelLoadingId) return;
+
+          setModalOpen(false);
+          setPendingCancel(null);
+
+          // si l’utilisateur fait "Retour", on réouvre Détails
+          if (returnToDetails) {
+            setOpenBooking(returnToDetails);
+            setReturnToDetails(null);
+          }
+        }}
+        onConfirm={doCancelOwner}
+      />
+
       <div className={`${UI.container} ${UI.section} space-y-6`}>
         <header className={UI.sectionTitleRow}>
           <div>
             <h1 className={UI.h1}>Réservations (mes places)</h1>
-            <p className={UI.p}>
-              Toutes les réservations sur toutes tes places.
-            </p>
+            <p className={UI.p}>Toutes les réservations sur toutes tes places.</p>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -294,8 +482,8 @@ export default function OwnerBookingsGlobalPage() {
         ) : (
           <div className="space-y-8">
             {/* À venir */}
-            <section className="space-y-3">
-              <div className="flex items-end justify-between gap-3">
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
                 <h2 className={UI.h2}>À venir</h2>
                 <span className={UI.subtle}>{upcoming.length} réservation(s)</span>
               </div>
@@ -305,72 +493,93 @@ export default function OwnerBookingsGlobalPage() {
                   <p className={UI.p}>Aucune réservation à venir.</p>
                 </div>
               ) : (
-                <div className="grid gap-3">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {upcoming.map((b) => {
                     const p = getParkingFromJoin(b.parkings);
+                    const photos = parsePhotos(p?.photos ?? null);
+                    const photo = firstPhotoUrl(photos);
+
+                    const chatAllowed = canChat(b, nowMs);
+                    const cancelAllowed = canCancelOwner(b, nowMs);
+
                     return (
-                      <div key={b.id} className={Card}>
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 space-y-1">
-                            <div className="font-semibold text-slate-900 truncate">
-                              {p?.title ?? "Parking"}
+                      <div key={b.id} className={`${UI.card} ${UI.cardHover} overflow-hidden`}>
+                        <div className="h-40 bg-slate-100">
+                          {photo ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={photo} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                              Aucune photo
                             </div>
-                            <div className="text-xs text-slate-600 truncate">
-                              {p?.address ?? "—"}
-                            </div>
-                            <div className="text-[11px] text-slate-400 font-mono">
-                              booking: {b.id}
-                            </div>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className={UI.chip}>Statut: {b.status ?? "—"}</span>
-                            <span className={UI.chip}>Paiement: {b.payment_status ?? "—"}</span>
-                          </div>
+                          )}
                         </div>
 
-                        <div className="mt-3 grid sm:grid-cols-2 gap-2 text-sm text-slate-700">
-                          <div>
-                            <span className="text-slate-500">Début :</span>{" "}
-                            <b className="text-slate-900">{formatDateTime(b.start_time)}</b>
+                        <div className={UI.cardPad}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-900 truncate">{p?.title ?? "Place"}</div>
+                              <div className="mt-1 text-xs text-slate-600 line-clamp-2">
+                                {p?.address ?? "Adresse non renseignée"}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1 items-end text-[11px]">
+                              <span className={UI.chip}>{b.status ?? "—"}</span>
+                              <span className={UI.chip}>{b.payment_status ?? "—"}</span>
+                            </div>
                           </div>
-                          <div>
-                            <span className="text-slate-500">Fin :</span>{" "}
-                            <b className="text-slate-900">{formatDateTime(b.end_time)}</b>
+
+                          <div className="mt-3 space-y-1 text-sm text-slate-700">
+                            <div>
+                              <span className="text-slate-500">Début :</span> <b>{formatDateTime(b.start_time)}</b>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">Fin :</span> <b>{formatDateTime(b.end_time)}</b>
+                            </div>
                           </div>
-                        </div>
 
-                        <div className="mt-2 text-sm text-slate-700 flex items-center justify-between">
-                          <span className="text-slate-500">Total</span>
-                          <b className="text-slate-900">{money(b.total_price, b.currency)}</b>
-                        </div>
+                          <div className="mt-3 flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Total</span>
+                            <b className="text-slate-900">{money(b.total_price, b.currency)}</b>
+                          </div>
 
-                        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                          <Link
-                            href={`/my-parkings/${b.parking_id}/bookings`}
-                            className={Btn.ghost}
-                            title="Ouvrir la page réservations de cette place"
-                          >
-                            Voir la place →
-                          </Link>
+                          <div className={`${UI.divider} my-4`} />
 
-                          <button
-                            type="button"
-                            className={Btn.primary}
-                            disabled={chatLoadingId === b.id}
-                            onClick={() => void openChat(b.id)}
-                          >
-                            {chatLoadingId === b.id ? "…" : "💬 Chat"}
-                          </button>
+                          {/* 3 boutons comme côté client */}
+                          <div className="flex gap-2">
+                            <Link href={`/parkings/${b.parking_id}`} className={`${UI.btnBase} ${UI.btnGhost} flex-1`}>
+                              Voir la place
+                            </Link>
 
-                          <button
-                            type="button"
-                            className={Btn.danger}
-                            disabled={cancelLoadingId === b.id}
-                            onClick={() => void cancelOwner(b.id)}
-                          >
-                            {cancelLoadingId === b.id ? "Annulation…" : "Annuler"}
-                          </button>
+                            <button
+                              type="button"
+                              className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+                              disabled={!chatAllowed || chatLoadingId === b.id}
+                              onClick={() => void openChat(b.id)}
+                              title={!chatAllowed ? "Chat désactivé (passée ou annulée)" : ""}
+                            >
+                              {chatLoadingId === b.id ? "…" : "Chat"}
+                            </button>
+
+                            <button
+                              type="button"
+                              className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+                              onClick={() => {
+                                setErr(null);
+                                setOpenBooking(b);
+                              }}
+                            >
+                              Détails
+                            </button>
+                          </div>
+
+                          {/* info discrète si annulation désactivée */}
+                          {!cancelAllowed ? (
+                            <div className="mt-3 text-xs text-slate-500">
+                              Annulation désactivée (réservation passée ou annulée).
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -379,69 +588,85 @@ export default function OwnerBookingsGlobalPage() {
               )}
             </section>
 
-            {/* Historique */}
-            <section className="space-y-3">
-              <div className="flex items-end justify-between gap-3">
-                <h2 className={UI.h2}>Historique</h2>
+            {/* Passées */}
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className={UI.h2}>Passées</h2>
                 <span className={UI.subtle}>{past.length} réservation(s)</span>
               </div>
 
               {past.length === 0 ? (
                 <div className={Card}>
-                  <p className={UI.p}>Aucun historique.</p>
+                  <p className={UI.p}>Aucune réservation passée.</p>
                 </div>
               ) : (
-                <div className="grid gap-3">
+                <div className="space-y-3">
                   {past.map((b) => {
                     const p = getParkingFromJoin(b.parkings);
+                    const photos = parsePhotos(p?.photos ?? null);
+                    const photo = firstPhotoUrl(photos);
+                    const chatAllowed = canChat(b, nowMs);
+
                     return (
-                      <div key={b.id} className={Card}>
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 space-y-1">
-                            <div className="font-semibold text-slate-900 truncate">
-                              {p?.title ?? "Parking"}
-                            </div>
-                            <div className="text-xs text-slate-600 truncate">
-                              {p?.address ?? "—"}
-                            </div>
-                            <div className="text-[11px] text-slate-400 font-mono">
-                              booking: {b.id}
-                            </div>
+                      <div
+                        key={b.id}
+                        className="rounded-2xl border border-slate-200/70 bg-white/70 backdrop-blur p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-16 h-12 rounded-xl bg-slate-100 overflow-hidden shrink-0">
+                            {photo ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={photo} alt="" className="w-full h-full object-cover" />
+                            ) : null}
                           </div>
 
-                          <div className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className={UI.chip}>{b.status ?? "—"}</span>
-                            <span className={UI.chip}>{b.payment_status ?? "—"}</span>
+                          <div className="min-w-0">
+                            <div className="font-semibold text-slate-900 truncate">{p?.title ?? "Place"}</div>
+                            <div className="mt-1 text-xs text-slate-600 line-clamp-2">
+                              {p?.address ?? "Adresse non renseignée"}
+                            </div>
+                            <div className="mt-2 text-sm text-slate-700">
+                              <span className="text-slate-500">Fin :</span> <b>{formatDateTime(b.end_time)}</b>
+                            </div>
+
+                            {isCancelled(b) ? (
+                              <div className="mt-2 text-xs text-slate-600">
+                                <b className="text-slate-900">Annulée</b>
+                                {refundBadge(b) ? (
+                                  <span className="ml-2 text-slate-600">· {refundBadge(b)!.label}</span>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
 
-                        <div className="mt-3 text-sm text-slate-700">
-                          <b className="text-slate-900">{formatDateTime(b.start_time)}</b>{" "}
-                          <span className="text-slate-400">→</span>{" "}
-                          <b className="text-slate-900">{formatDateTime(b.end_time)}</b>
-                        </div>
-
-                        <div className="mt-2 text-sm text-slate-700 flex items-center justify-between">
-                          <span className="text-slate-500">Total</span>
-                          <b className="text-slate-900">{money(b.total_price, b.currency)}</b>
-                        </div>
-
-                        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                          <Link
-                            href={`/my-parkings/${b.parking_id}/bookings`}
-                            className={Btn.ghost}
-                          >
-                            Voir la place →
-                          </Link>
+                        <div className="flex items-center gap-2 justify-between sm:justify-end">
+                          <div className="text-sm text-slate-700">
+                            <div className="text-slate-500 text-xs">Total</div>
+                            <div className="font-semibold">{money(b.total_price, b.currency)}</div>
+                          </div>
 
                           <button
                             type="button"
-                            className={Btn.primary}
-                            disabled={chatLoadingId === b.id}
+                            className={`${UI.btnBase} ${UI.btnPrimary}`}
+                            disabled={!chatAllowed || chatLoadingId === b.id}
                             onClick={() => void openChat(b.id)}
+                            title={!chatAllowed ? "Chat désactivé (passée ou annulée)" : ""}
                           >
-                            {chatLoadingId === b.id ? "…" : "💬 Chat"}
+                            {chatLoadingId === b.id ? "…" : "Chat"}
                           </button>
+
+                          <button
+                            type="button"
+                            className={`${UI.btnBase} ${UI.btnGhost}`}
+                            onClick={() => setOpenBooking(b)}
+                          >
+                            Détails
+                          </button>
+
+                          <Link href={`/parkings/${b.parking_id}`} className={`${UI.btnBase} ${UI.btnPrimary}`}>
+                            Voir la place
+                          </Link>
                         </div>
                       </div>
                     );
@@ -451,6 +676,133 @@ export default function OwnerBookingsGlobalPage() {
             </section>
           </div>
         )}
+
+        {/* MODALE DETAILS (z-40 chez toi) */}
+        {openBooking ? (
+          <div
+            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setOpenBooking(null)}
+          >
+            <div className={`${UI.card} ${UI.cardPad} w-full max-w-lg space-y-4`} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold text-slate-900">Détails réservation (owner)</h2>
+                  <p className={UI.subtle}>
+                    ID : <span className="font-mono break-all">{openBooking.id}</span>
+                  </p>
+                </div>
+                <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => setOpenBooking(null)}>
+                  Fermer
+                </button>
+              </div>
+
+              {(() => {
+                const p = getParkingFromJoin(openBooking.parkings);
+                const photos = parsePhotos(p?.photos ?? null);
+                const photo = firstPhotoUrl(photos);
+
+                const cancelled = isCancelled(openBooking);
+                const pastBooking = isPast(openBooking, nowMs);
+                const chatAllowed = canChat(openBooking, nowMs);
+                const cancelAllowed = canCancelOwner(openBooking, nowMs);
+
+                const rb = refundBadge(openBooking);
+
+                return (
+                  <div className="space-y-3">
+                    {photo ? (
+                      <div className="h-44 rounded-2xl overflow-hidden bg-slate-100">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={photo} alt="" className="w-full h-full object-cover" />
+                      </div>
+                    ) : null}
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-semibold text-slate-900">{p?.title ?? "Place"}</div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className={UI.chip}>{openBooking.status ?? "—"}</span>
+                        <span className={UI.chip}>{openBooking.payment_status ?? "—"}</span>
+                      </div>
+                    </div>
+
+                    {cancelled ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                        <div className="font-semibold text-slate-900">Réservation annulée</div>
+                        <div className="mt-1 text-xs text-slate-600">
+                          {rb ? rb.label : "Statut remboursement indisponible"}
+                          {openBooking.cancelled_by ? ` · par ${openBooking.cancelled_by}` : ""}
+                          {openBooking.cancelled_at ? ` · ${formatDateTime(openBooking.cancelled_at)}` : ""}
+                        </div>
+                      </div>
+                    ) : pastBooking ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                        <div className="font-semibold text-slate-900">Réservation passée</div>
+                        <div className="mt-1 text-xs text-slate-600">Chat et annulation désactivés.</div>
+                      </div>
+                    ) : null}
+
+                    <div className="text-sm text-slate-700">
+                      <div className="text-slate-500 text-xs">Adresse</div>
+                      <div>{p?.address ?? "—"}</div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-700">
+                      <div>
+                        <div className="text-slate-500 text-xs">Début</div>
+                        <div className="font-medium">{formatDateTime(openBooking.start_time)}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500 text-xs">Fin</div>
+                        <div className="font-medium">{formatDateTime(openBooking.end_time)}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-500">Total</span>
+                      <b className="text-slate-900">{money(openBooking.total_price, openBooking.currency)}</b>
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <Link
+                        href={`/parkings/${openBooking.parking_id}`}
+                        className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+                        onClick={() => setOpenBooking(null)}
+                      >
+                        Ouvrir la place
+                      </Link>
+
+                      <button
+                        type="button"
+                        className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+                        disabled={!chatAllowed || chatLoadingId === openBooking.id}
+                        onClick={() => void openChat(openBooking.id)}
+                        title={!chatAllowed ? "Chat désactivé (passée ou annulée)" : ""}
+                      >
+                        {chatLoadingId === openBooking.id ? "…" : "Chat"}
+                      </button>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className={`${UI.btnBase} ${UI.btnDanger} flex-1`}
+                        disabled={!cancelAllowed || !!cancelLoadingId}
+                        onClick={() => openOwnerCancelModal(openBooking)}
+                        title={!cancelAllowed ? "Annulation désactivée (passée ou annulée)" : ""}
+                      >
+                        {cancelLoadingId ? "Annulation…" : "Annuler"}
+                      </button>
+                    </div>
+
+                    <div className="pt-2 text-xs text-slate-500">
+                      Remarque : l’annulation propriétaire déclenche un remboursement automatique uniquement si la réservation est payée.
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        ) : null}
       </div>
     </main>
   );

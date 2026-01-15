@@ -22,6 +22,13 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
+function isPastEnd(endIso: string | null | undefined) {
+  if (!endIso) return false;
+  const end = new Date(endIso).getTime();
+  if (!Number.isFinite(end)) return false;
+  return end <= Date.now();
+}
+
 type Body = {
   conversationId?: string;
   body?: string;
@@ -73,15 +80,15 @@ export async function POST(req: Request) {
     }
     const userId = u.user.id;
 
-    // Admin (service role)
+    // Admin
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
 
-    // Vérifie accès + récup owner/client
+    // ✅ Vérifie accès + récup booking_id (pour bloquer passé/annulé)
     const { data: c, error: cErr } = await admin
       .from("conversations")
-      .select("id, owner_id, client_id")
+      .select("id, owner_id, client_id, booking_id")
       .eq("id", conversationId)
       .maybeSingle();
 
@@ -90,6 +97,34 @@ export async function POST(req: Request) {
 
     const allowed = c.owner_id === userId || c.client_id === userId;
     if (!allowed) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+
+    // ✅ Blocage chat si booking lié est passé/annulé
+    if (c.booking_id) {
+      const { data: b, error: bErr } = await admin
+        .from("bookings")
+        .select("id, status, end_time")
+        .eq("id", c.booking_id)
+        .maybeSingle();
+
+      if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+      if (!b) {
+        return NextResponse.json({ ok: false, error: "Booking not found" }, { status: 404 });
+      }
+
+      if ((b.status ?? "").toLowerCase() === "cancelled") {
+        return NextResponse.json(
+          { ok: false, error: "Chat désactivé", detail: "Réservation annulée." },
+          { status: 400 }
+        );
+      }
+
+      if (isPastEnd(b.end_time)) {
+        return NextResponse.json(
+          { ok: false, error: "Chat désactivé", detail: "Réservation terminée." },
+          { status: 400 }
+        );
+      }
+    }
 
     const recipientId = c.owner_id === userId ? c.client_id : c.owner_id;
     const senderLabel = c.owner_id === userId ? "Propriétaire" : "Client";
@@ -140,13 +175,13 @@ export async function POST(req: Request) {
 
         const emailText = `${emailPreview(text)}\n\nOuvrir la conversation : ${conversationUrl}`;
 
-        // ✅ IMPORTANT: pas de JSX dans un .ts -> React.createElement()
+        // ✅ pas de JSX dans .ts
         const emailElement = React.createElement(NewMessageEmail, {
           senderName: senderLabel,
           message: emailText,
         });
 
-        // ✅ Certaines versions de @react-email/render retournent Promise<string>
+        // ✅ await : certaines versions retournent Promise<string>
         const html = await render(emailElement);
 
         await resend.emails.send({
@@ -158,7 +193,6 @@ export async function POST(req: Request) {
       }
     } catch (e) {
       console.error("Resend email failed:", e);
-      // on n'empêche pas l'envoi du message
     }
 
     return NextResponse.json({ ok: true, message: m }, { status: 200 });
