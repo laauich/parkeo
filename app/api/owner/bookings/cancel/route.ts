@@ -2,6 +2,11 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
+import {
+  sendEmail,
+  bookingCancelledClientEmailHtml,
+  bookingCancelledOwnerEmailHtml,
+} from "@/app/lib/mailer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,25 +23,15 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
-function isPast(endIso: string) {
-  const end = new Date(endIso).getTime();
-  if (Number.isNaN(end)) return false;
-  return end <= Date.now();
-}
-
 type Body = { bookingId?: string };
 
-type ApiOk = {
-  ok: true;
-  refunded?: boolean;
-  already?: boolean;
-  refund_status?: string;
-};
+type ApiOk = { ok: true; refunded?: boolean; already?: boolean };
 type ApiErr = { ok: false; error: string; detail?: string };
 
 function jsonOk(payload: ApiOk, status = 200) {
   return NextResponse.json(payload, { status });
 }
+
 function jsonErr(error: string, status = 400, detail?: string) {
   const payload: ApiErr = { ok: false, error, ...(detail ? { detail } : {}) };
   return NextResponse.json(payload, { status });
@@ -50,7 +45,9 @@ export async function POST(req: Request) {
     const stripeKey = env("STRIPE_SECRET_KEY");
 
     const token = getBearerToken(req);
-    if (!token) return jsonErr("Unauthorized", 401, "Missing Authorization Bearer token");
+    if (!token) {
+      return jsonErr("Unauthorized", 401, "Missing Authorization Bearer token");
+    }
 
     const body = (await req.json().catch(() => ({}))) as Body;
     const bookingId = body.bookingId?.trim();
@@ -63,18 +60,20 @@ export async function POST(req: Request) {
     });
 
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-    if (uErr || !u.user) return jsonErr("Unauthorized", 401, uErr?.message ?? "No user");
+    if (uErr || !u.user) {
+      return jsonErr("Unauthorized", 401, uErr?.message ?? "No user");
+    }
 
     // Admin
     const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
 
-    // Load booking (+ end_time pour blocage)
+    // Load booking (include times + amount for email)
     const { data: booking, error: bErr } = await supabaseAdmin
       .from("bookings")
       .select(
-        "id, parking_id, status, payment_status, end_time, stripe_payment_intent_id, refund_id, refund_status"
+        "id, parking_id, user_id, start_time, end_time, total_price, currency, status, payment_status, stripe_payment_intent_id, refund_id, refund_status"
       )
       .eq("id", bookingId)
       .maybeSingle();
@@ -82,69 +81,107 @@ export async function POST(req: Request) {
     if (bErr) return jsonErr("DB error", 500, bErr.message);
     if (!booking) return jsonErr("Booking not found", 404);
 
-    // Owner check
+    // Load parking owner + title/address for email
     const { data: p, error: pErr } = await supabaseAdmin
       .from("parkings")
-      .select("owner_id")
+      .select("id, owner_id, title, address")
       .eq("id", booking.parking_id)
       .maybeSingle();
 
     if (pErr) return jsonErr("DB error", 500, pErr.message);
-    if (!p || p.owner_id !== u.user.id) return jsonErr("Forbidden", 403);
+    if (!p) return jsonErr("Parking not found", 404);
 
-    // ✅ Déjà annulée => idempotent ok
+    if (p.owner_id !== u.user.id) return jsonErr("Forbidden", 403);
+
+    // Already cancelled
     if ((booking.status ?? "").toLowerCase() === "cancelled") {
-      return jsonOk(
-        {
-          ok: true,
-          already: true,
-          refunded: (booking.refund_status ?? "").toLowerCase() === "refunded",
-          refund_status: booking.refund_status ?? undefined,
-        },
-        200
-      );
-    }
-
-    // ✅ Interdit si passée
-    if (booking.end_time && isPast(booking.end_time)) {
-      return jsonErr("Annulation impossible", 409, "Réservation passée");
+      // ✅ pas d’email en already
+      return jsonOk({ ok: true, already: true }, 200);
     }
 
     const paid = (booking.payment_status ?? "").toLowerCase() === "paid";
 
-    // Cancel booking first
+    // Cancel booking first (effective cancellation)
     const { error: upErr } = await supabaseAdmin
       .from("bookings")
       .update({
         status: "cancelled",
         cancelled_at: new Date().toISOString(),
-        cancelled_by: "owner",
         refund_status: paid ? "requested_owner" : "none",
         payment_status: paid ? "refunding" : booking.payment_status,
+        cancelled_by: "owner",
       })
       .eq("id", booking.id);
 
     if (upErr) return jsonErr("Update failed", 500, upErr.message);
 
-    // Not paid => done
-    if (!paid) return jsonOk({ ok: true, refunded: false, refund_status: "none" }, 200);
+    // ✅ SOLUTION 1: emails UNIQUEMENT APRÈS annulation DB ok
+    try {
+      const ownerEmail = u.user.email ?? null;
 
-    // Paid: refund flow (idempotent)
-    if (booking.refund_id || (booking.refund_status ?? "").toLowerCase() === "refunded") {
-      return jsonOk({ ok: true, refunded: true, already: true, refund_status: "refunded" }, 200);
+      let clientEmail: string | null = null;
+      if (booking.user_id) {
+        const client = await supabaseAdmin.auth.admin.getUserById(booking.user_id);
+        clientEmail = client.data?.user?.email ?? null;
+      }
+
+      const parkingTitle = p.title ?? "Place";
+      const parkingAddress = p.address ?? null;
+
+      if (ownerEmail) {
+        await sendEmail({
+          to: ownerEmail,
+          subject: "Annulation confirmée (propriétaire) — Parkeo",
+          html: bookingCancelledOwnerEmailHtml({
+            cancelledBy: "owner",
+            bookingId: booking.id,
+            parkingTitle,
+            parkingAddress,
+            startTimeIso: booking.start_time,
+            endTimeIso: booking.end_time,
+            totalPrice: booking.total_price,
+            currency: booking.currency,
+          }),
+        });
+      }
+
+      if (clientEmail) {
+        await sendEmail({
+          to: clientEmail,
+          subject: "Votre réservation a été annulée par le propriétaire — Parkeo",
+          html: bookingCancelledClientEmailHtml({
+            cancelledBy: "owner",
+            bookingId: booking.id,
+            parkingTitle,
+            parkingAddress,
+            startTimeIso: booking.start_time,
+            endTimeIso: booking.end_time,
+            totalPrice: booking.total_price,
+            currency: booking.currency,
+          }),
+        });
+      }
+    } catch (e) {
+      console.error("Cancel emails (owner) failed:", e);
     }
 
-    // ✅ Missing intent => plus de 500 : on marque missing_intent et on renvoie ok
+    // If not paid, done
+    if (!paid) return jsonOk({ ok: true, refunded: false }, 200);
+
+    // Paid: need refund
     if (!booking.stripe_payment_intent_id) {
+      // best-effort rollback
       await supabaseAdmin
         .from("bookings")
-        .update({
-          refund_status: "missing_intent",
-          payment_status: "paid",
-        })
+        .update({ refund_status: "missing_intent", payment_status: "paid" })
         .eq("id", booking.id);
 
-      return jsonOk({ ok: true, refunded: false, refund_status: "missing_intent" }, 200);
+      return jsonErr("Refund impossible", 500, "stripe_payment_intent_id manquant");
+    }
+
+    // Idempotency: if refund already exists in DB, don't recreate
+    if (booking.refund_id || (booking.refund_status ?? "").toLowerCase() === "refunded") {
+      return jsonOk({ ok: true, refunded: true, already: true }, 200);
     }
 
     const stripe = new Stripe(stripeKey);
@@ -168,9 +205,8 @@ export async function POST(req: Request) {
         return jsonErr("Refund ok but DB update failed", 500, upd2Err.message);
       }
 
-      return jsonOk({ ok: true, refunded: true, refund_status: "refunded" }, 200);
+      return jsonOk({ ok: true, refunded: true }, 200);
     } catch (e: unknown) {
-      // Refund failed at Stripe: keep cancelled but set coherent refund/payment status
       await supabaseAdmin
         .from("bookings")
         .update({

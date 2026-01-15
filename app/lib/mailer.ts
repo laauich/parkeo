@@ -47,6 +47,28 @@ export function escapeHtml(s: string) {
     .replaceAll("'", "&#039;");
 }
 
+function money(v: number | null, currency?: string | null) {
+  if (v == null || Number.isNaN(v)) return "—";
+  return `${v} ${(currency ?? "CHF").toUpperCase()}`;
+}
+
+function formatDateTime(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("fr-CH", {
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/* ---------------------------
+   EXISTANTS (tu les avais)
+--------------------------- */
+
 export function bookingOwnerEmailHtml(args: {
   parkingTitle: string;
   parkingAddress?: string | null;
@@ -58,10 +80,9 @@ export function bookingOwnerEmailHtml(args: {
 }) {
   const title = escapeHtml(args.parkingTitle);
   const addr = escapeHtml(args.parkingAddress ?? "—");
-  const price =
-    args.totalPrice == null ? "—" : `${args.totalPrice} ${(args.currency ?? "CHF").toUpperCase()}`;
+  const price = money(args.totalPrice, args.currency);
 
-  const link = appUrl(`/my-parkings`); // tu peux affiner vers une page détail si tu en as une
+  const link = appUrl(`/my-parkings`);
 
   return `
   <div style="font-family:Arial,sans-serif;line-height:1.4">
@@ -70,8 +91,8 @@ export function bookingOwnerEmailHtml(args: {
     <ul>
       <li><b>Place :</b> ${title}</li>
       <li><b>Adresse :</b> ${addr}</li>
-      <li><b>Début :</b> ${escapeHtml(args.startTimeIso)}</li>
-      <li><b>Fin :</b> ${escapeHtml(args.endTimeIso)}</li>
+      <li><b>Début :</b> ${escapeHtml(formatDateTime(args.startTimeIso))}</li>
+      <li><b>Fin :</b> ${escapeHtml(formatDateTime(args.endTimeIso))}</li>
       <li><b>Total :</b> ${escapeHtml(price)}</li>
       <li><b>ID réservation :</b> ${escapeHtml(args.bookingId)}</li>
     </ul>
@@ -88,8 +109,7 @@ export function bookingClientEmailHtml(args: {
   bookingId: string;
 }) {
   const link = appUrl(`/my-bookings`);
-  const price =
-    args.totalPrice == null ? "—" : `${args.totalPrice} ${(args.currency ?? "CHF").toUpperCase()}`;
+  const price = money(args.totalPrice, args.currency);
 
   return `
   <div style="font-family:Arial,sans-serif;line-height:1.4">
@@ -97,8 +117,8 @@ export function bookingClientEmailHtml(args: {
     <p>Ta réservation a bien été créée :</p>
     <ul>
       <li><b>Place :</b> ${escapeHtml(args.parkingTitle)}</li>
-      <li><b>Début :</b> ${escapeHtml(args.startTimeIso)}</li>
-      <li><b>Fin :</b> ${escapeHtml(args.endTimeIso)}</li>
+      <li><b>Début :</b> ${escapeHtml(formatDateTime(args.startTimeIso))}</li>
+      <li><b>Fin :</b> ${escapeHtml(formatDateTime(args.endTimeIso))}</li>
       <li><b>Total :</b> ${escapeHtml(price)}</li>
       <li><b>ID réservation :</b> ${escapeHtml(args.bookingId)}</li>
     </ul>
@@ -123,5 +143,90 @@ export function messageReceivedEmailHtml(args: {
       ${preview}
     </p>
     <p><a href="${link}">Ouvrir la conversation</a></p>
+  </div>`;
+}
+
+/* ---------------------------
+   NOUVEAU : EMAILS ANNULATION
+   (Solution 1: on confirme juste l'annulation)
+--------------------------- */
+
+export function bookingCancelledClientEmailHtml(args: {
+  parkingTitle: string;
+  parkingAddress?: string | null;
+  startTimeIso: string;
+  endTimeIso: string;
+  totalPrice: number | null;
+  currency: string | null;
+  bookingId: string;
+  cancelledBy: "client" | "owner";
+}) {
+  const title = escapeHtml(args.parkingTitle);
+  const addr = escapeHtml(args.parkingAddress ?? "—");
+  const price = escapeHtml(money(args.totalPrice, args.currency));
+  const start = escapeHtml(formatDateTime(args.startTimeIso));
+  const end = escapeHtml(formatDateTime(args.endTimeIso));
+
+  const heading =
+    args.cancelledBy === "client"
+      ? "Annulation confirmée ✅"
+      : "Réservation annulée par le propriétaire ✅";
+
+  const link = appUrl(`/my-bookings`);
+
+  return `
+  <div style="font-family:Arial,sans-serif;line-height:1.4">
+    <h2>${heading}</h2>
+    <p>Voici les détails de la réservation annulée :</p>
+    <ul>
+      <li><b>Place :</b> ${title}</li>
+      <li><b>Adresse :</b> ${addr}</li>
+      <li><b>Début :</b> ${start}</li>
+      <li><b>Fin :</b> ${end}</li>
+      <li><b>Total :</b> ${price}</li>
+      <li><b>ID réservation :</b> ${escapeHtml(args.bookingId)}</li>
+      <li><b>Statut :</b> Annulée</li>
+    </ul>
+    <p><a href="${link}">Voir mes réservations</a></p>
+  </div>`;
+}
+
+export function bookingCancelledOwnerEmailHtml(args: {
+  parkingTitle: string;
+  parkingAddress?: string | null;
+  startTimeIso: string;
+  endTimeIso: string;
+  totalPrice: number | null;
+  currency: string | null;
+  bookingId: string;
+  cancelledBy: "client" | "owner";
+}) {
+  const title = escapeHtml(args.parkingTitle);
+  const addr = escapeHtml(args.parkingAddress ?? "—");
+  const price = escapeHtml(money(args.totalPrice, args.currency));
+  const start = escapeHtml(formatDateTime(args.startTimeIso));
+  const end = escapeHtml(formatDateTime(args.endTimeIso));
+
+  const heading =
+    args.cancelledBy === "client"
+      ? "Le client a annulé une réservation ✅"
+      : "Annulation confirmée (propriétaire) ✅";
+
+  const link = appUrl(`/my-parkings/bookings`);
+
+  return `
+  <div style="font-family:Arial,sans-serif;line-height:1.4">
+    <h2>${heading}</h2>
+    <p>Voici les détails :</p>
+    <ul>
+      <li><b>Place :</b> ${title}</li>
+      <li><b>Adresse :</b> ${addr}</li>
+      <li><b>Début :</b> ${start}</li>
+      <li><b>Fin :</b> ${end}</li>
+      <li><b>Total :</b> ${price}</li>
+      <li><b>ID réservation :</b> ${escapeHtml(args.bookingId)}</li>
+      <li><b>Statut :</b> Annulée</li>
+    </ul>
+    <p><a href="${link}">Voir réservations (mes places)</a></p>
   </div>`;
 }

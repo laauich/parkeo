@@ -13,10 +13,10 @@ function env(name: string) {
 
 function siteUrl() {
   // Recommandé : NEXT_PUBLIC_SITE_URL dans Vercel
-  // En dev: http://localhost:3000
+  // En dev: https://parkeo.ch
   const v = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (v) return v.replace(/\/+$/, "");
-  return "http://localhost:3000";
+  return "https://parkeo.ch";
 }
 
 type Body = {
