@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useUnreadCount } from "@/app/hooks/useUnreadCount";
 
@@ -11,7 +11,7 @@ export default function NavbarClient() {
   const { ready, session, signOut } = useAuth();
   const [open, setOpen] = useState(false);
 
-  // ✅ dropdown “Propriétaire” (desktop + mobile)
+  // ✅ submenu "Propriétaire"
   const [ownerOpen, setOwnerOpen] = useState(false);
 
   const pathname = usePathname();
@@ -21,16 +21,6 @@ export default function NavbarClient() {
 
   const isActive = (href: string) =>
     pathname === href || (href !== "/" && pathname?.startsWith(href));
-
-  // ✅ activer “Propriétaire” si on est sur une de ses pages
-  const ownerActive = useMemo(() => {
-    return (
-      pathname === "/my-parkings" ||
-      pathname?.startsWith("/my-parkings/") ||
-      pathname === "/my-parkings/bookings" ||
-      pathname?.startsWith("/my-parkings/bookings/")
-    );
-  }, [pathname]);
 
   const navClass = (href: string) =>
     [
@@ -55,11 +45,45 @@ export default function NavbarClient() {
     </span>
   );
 
-  // ✅ util: ferme menu mobile + dropdowns au clic lien
-  const closeAll = () => {
+  // ✅ ferme menu mobile si on passe en desktop
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mq = window.matchMedia("(min-width: 768px)");
+    const onChange = () => {
+      if (mq.matches) {
+        setOpen(false);
+        setOwnerOpen(false);
+      }
+    };
+
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  // ✅ ferme menus si navigation
+  useEffect(() => {
     setOpen(false);
     setOwnerOpen(false);
-  };
+  }, [pathname]);
+
+  // Helpers stacked mobile
+  const mobileLinkClass = (href: string) => [navClass(href), "w-full block text-left"].join(" ");
+
+  // Propriétaire: actif si une des pages est active
+  const ownerActive = isActive("/my-parkings") || isActive("/my-parkings/bookings");
+
+  // Bouton accordéon propriétaire (visuel clair)
+  const ownerTriggerClass = [
+    "w-full md:w-auto",
+    "inline-flex items-center justify-between md:justify-center gap-2",
+    "px-3 py-1.5 rounded-xl",
+    "border",
+    ownerActive || ownerOpen
+      ? "bg-violet-100/70 text-slate-900 border-violet-200 ring-1 ring-violet-200"
+      : "bg-white/60 text-slate-700 border-slate-200/70 hover:bg-slate-100/80",
+  ].join(" ");
 
   return (
     <header
@@ -82,7 +106,10 @@ export default function NavbarClient() {
           <Link
             href="/"
             className="font-semibold tracking-tight text-slate-900 px-2 py-1 rounded-xl hover:bg-white/60 transition"
-            onClick={closeAll}
+            onClick={() => {
+              setOpen(false);
+              setOwnerOpen(false);
+            }}
           >
             Parkeo
           </Link>
@@ -102,56 +129,62 @@ export default function NavbarClient() {
               Réservations
             </Link>
 
-            {/* ✅ Propriétaire dropdown (desktop) */}
+            {/* ✅ Groupe Propriétaire (desktop) */}
             <div className="relative">
               <button
                 type="button"
-                className={[
-                  UI.navLink,
-                  "px-3 py-1.5 rounded-xl",
-                  ownerActive
-                    ? "bg-violet-100/70 text-slate-900 ring-1 ring-violet-200"
-                    : "hover:bg-slate-100/80",
-                ].join(" ")}
+                className={ownerTriggerClass}
                 aria-expanded={ownerOpen}
-                aria-haspopup="menu"
+                aria-controls="owner-submenu-desktop"
                 onClick={() => setOwnerOpen((v) => !v)}
               >
-                Propriétaire <span className="ml-1">▾</span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-violet-600/10 text-violet-700 text-sm">
+                    P
+                  </span>
+                  Propriétaire
+                </span>
+
+                <span
+                  className={[
+                    "text-slate-600 transition-transform",
+                    ownerOpen ? "rotate-180" : "rotate-0",
+                  ].join(" ")}
+                >
+                  ▾
+                </span>
               </button>
 
               {ownerOpen ? (
                 <div
-                  className="absolute left-0 mt-2 w-56 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur shadow-lg p-1 z-50"
-                  role="menu"
+                  id="owner-submenu-desktop"
+                  className="absolute left-0 mt-2 w-56 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur shadow-lg p-2 z-50"
                 >
-                  <Link
-                    href="/my-parkings"
-                    className={[
-                      "block px-3 py-2 rounded-xl text-sm",
-                      isActive("/my-parkings")
-                        ? "bg-slate-100 text-slate-900"
-                        : "hover:bg-slate-100/80 text-slate-700",
-                    ].join(" ")}
-                    onClick={closeAll}
-                    role="menuitem"
-                  >
-                    Mes places
-                  </Link>
+                  <div className="flex flex-col gap-1">
+                    <Link
+                      className={[
+                        navClass("/my-parkings"),
+                        "w-full block",
+                        "justify-start",
+                      ].join(" ")}
+                      href="/my-parkings"
+                      onClick={() => setOwnerOpen(false)}
+                    >
+                      Mes places
+                    </Link>
 
-                  <Link
-                    href="/my-parkings/bookings"
-                    className={[
-                      "block px-3 py-2 rounded-xl text-sm",
-                      isActive("/my-parkings/bookings")
-                        ? "bg-slate-100 text-slate-900"
-                        : "hover:bg-slate-100/80 text-slate-700",
-                    ].join(" ")}
-                    onClick={closeAll}
-                    role="menuitem"
-                  >
-                    Réservations (mes places)
-                  </Link>
+                    <Link
+                      className={[
+                        navClass("/my-parkings/bookings"),
+                        "w-full block",
+                        "justify-start",
+                      ].join(" ")}
+                      href="/my-parkings/bookings"
+                      onClick={() => setOwnerOpen(false)}
+                    >
+                      Réservations (mes places)
+                    </Link>
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -182,80 +215,94 @@ export default function NavbarClient() {
           )}
         </div>
 
-        {/* Mobile */}
-<button
-  type="button"
-  className={["md:hidden", btnGhostPill, "inline-flex items-center gap-2"].join(" ")}
-  onClick={() => setOpen((v) => !v)}
-  aria-label={open ? "Fermer le menu" : "Ouvrir le menu"}
-  aria-expanded={open}
->
-  <span className="text-lg leading-none">{open ? "✕" : "☰"}</span>
-  <span className="text-sm">{open ? "Fermer" : "Menu"}</span>
-</button>
-
+        {/* Mobile button */}
+        <button
+          type="button"
+          className={["md:hidden", btnGhostPill].join(" ")}
+          onClick={() => setOpen((v) => !v)}
+          aria-label="Menu"
+          aria-expanded={open}
+        >
+          {open ? "Fermer" : "☰ Menu"}
+        </button>
       </div>
 
-      {/* Mobile dropdown */}
+      {/* Mobile menu */}
       {open && (
-        <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur relative z-[60]">
-    <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 flex flex-col gap-2">
+        <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
+          <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
+            <Link className={mobileLinkClass("/map")} href="/map" onClick={() => setOpen(false)}>
+              Carte
+            </Link>
             <Link
-  className={[navClass("/map"), "w-full block text-left"].join(" ")}
-  href="/map"
-  onClick={() => setOpen(false)}
->
-  Carte
-</Link>
-<Link
-  className={[navClass("/messages"), "w-full block text-left"].join(" ")}
-  href="/messages"
-  onClick={() => setOpen(false)}
->
- {MessagesLabel}
-</Link>
-<Link
-  className={[navClass("/my-bookings"), "w-full block text-left"].join(" ")}
-  href="/my-bookings"
-  onClick={() => setOpen(false)}
->
- Réservations
-</Link>
+              className={mobileLinkClass("/parkings")}
+              href="/parkings"
+              onClick={() => setOpen(false)}
+            >
+              Parkings
+            </Link>
+            <Link
+              className={mobileLinkClass("/messages")}
+              href="/messages"
+              onClick={() => setOpen(false)}
+            >
+              {MessagesLabel}
+            </Link>
+            <Link
+              className={mobileLinkClass("/my-bookings")}
+              href="/my-bookings"
+              onClick={() => setOpen(false)}
+            >
+              Réservations
+            </Link>
 
-
-            {/* ✅ Propriétaire dropdown (mobile) */}
+            {/* ✅ Accordéon Propriétaire (mobile) */}
             <div className="pt-1">
               <button
                 type="button"
                 className={[
-                  UI.navLink,
-                  "w-full text-left px-3 py-2 rounded-xl",
-                  ownerActive
-                    ? "bg-violet-100/70 text-slate-900 ring-1 ring-violet-200"
-                    : "hover:bg-slate-100/80",
+                  ownerTriggerClass,
+                  "w-full",
+                  "text-left",
                 ].join(" ")}
-                aria-expanded={ownerOpen}
                 onClick={() => setOwnerOpen((v) => !v)}
+                aria-expanded={ownerOpen}
+                aria-controls="owner-submenu-mobile"
               >
-                <span className="flex items-center justify-between">
-                  <span>Propriétaire</span>
-                  <span>{ownerOpen ? "▴" : "▾"}</span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-violet-600/10 text-violet-700 text-sm">
+                    P
+                  </span>
+                  Propriétaire
+                </span>
+                <span
+                  className={[
+                    "text-slate-600 transition-transform",
+                    ownerOpen ? "rotate-180" : "rotate-0",
+                  ].join(" ")}
+                >
+                  ▾
                 </span>
               </button>
 
               {ownerOpen ? (
-                <div className="mt-2 pl-2 space-y-2">
+                <div
+                  id="owner-submenu-mobile"
+                  className="mt-2 ml-2 pl-3 border-l border-slate-200/70 flex flex-col gap-2"
+                >
+                  {/* ✅ bien stacked */}
                   <Link
-                    className={navClass("/my-parkings")}
+                    className={["w-full block", mobileLinkClass("/my-parkings")].join(" ")}
                     href="/my-parkings"
-                    onClick={closeAll}
+                    onClick={() => setOpen(false)}
                   >
                     Mes places
                   </Link>
+
                   <Link
-                    className={navClass("/my-parkings/bookings")}
+                    className={["w-full block", mobileLinkClass("/my-parkings/bookings")].join(" ")}
                     href="/my-parkings/bookings"
-                    onClick={closeAll}
+                    onClick={() => setOpen(false)}
                   >
                     Réservations (mes places)
                   </Link>
@@ -264,7 +311,7 @@ export default function NavbarClient() {
             </div>
 
             <div className="pt-2 flex flex-col gap-2">
-              <Link href="/parkings/new" className={btnPrimaryPill} onClick={closeAll}>
+              <Link href="/parkings/new" className={btnPrimaryPill} onClick={() => setOpen(false)}>
                 Proposer ma place
               </Link>
 
@@ -279,7 +326,7 @@ export default function NavbarClient() {
                     type="button"
                     className={btnGhostPill}
                     onClick={() => {
-                      closeAll();
+                      setOpen(false);
                       signOut();
                     }}
                   >
@@ -287,7 +334,7 @@ export default function NavbarClient() {
                   </button>
                 </>
               ) : (
-                <Link href="/login" className={btnGhostPill} onClick={closeAll}>
+                <Link href="/login" className={btnGhostPill} onClick={() => setOpen(false)}>
                   Se connecter
                 </Link>
               )}
