@@ -1,3 +1,4 @@
+// app/components/NavbarClient.tsx
 "use client";
 
 import Link from "next/link";
@@ -51,11 +52,17 @@ export default function NavbarClient() {
     setOwnerOpen(false);
   };
 
-  const closeOwnerOnly = () => {
-    setOwnerOpen(false);
-  };
+  const closeOwnerOnly = () => setOwnerOpen(false);
 
-  // ✅ Fix responsive "safe" : si on repasse en desktop, on ferme les menus
+  // ✅ Ferme menus si navigation (sans warning “setState in effect”)
+  useEffect(() => {
+    queueMicrotask(() => {
+      setOpen(false);
+      setOwnerOpen(false);
+    });
+  }, [pathname]);
+
+  // ✅ Fix responsive : si on repasse en desktop, on ferme les menus
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -72,25 +79,49 @@ export default function NavbarClient() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  // ✅ Click outside => close owner submenu (desktop + mobile)
-  const ownerWrapRef = useRef<HTMLDivElement | null>(null);
+  // ✅ Click outside (desktop+mobile) => close owner submenu
+  const ownerWrapDesktopRef = useRef<HTMLDivElement | null>(null);
+  const ownerWrapMobileRef = useRef<HTMLDivElement | null>(null);
+
+  // ✅ Click outside (mobile) => close main menu too (optionnel mais très utile)
+  const mobileMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!ownerOpen) return;
+    if (!ownerOpen && !open) return;
 
     const onPointerDown = (e: PointerEvent) => {
-      const el = ownerWrapRef.current;
-      if (!el) return;
       const target = e.target as Node | null;
-      if (target && !el.contains(target)) {
-        setOwnerOpen(false);
+      if (!target) return;
+
+      // --- Close owner submenu if click outside owner wrappers ---
+      if (ownerOpen) {
+        const d = ownerWrapDesktopRef.current;
+        const m = ownerWrapMobileRef.current;
+
+        const insideDesktop = d ? d.contains(target) : false;
+        const insideMobile = m ? m.contains(target) : false;
+
+        if (!insideDesktop && !insideMobile) {
+          setOwnerOpen(false);
+        }
+      }
+
+      // --- Close mobile menu if click outside the mobile menu area ---
+      if (open) {
+        const mm = mobileMenuRef.current;
+        // le bouton hamburger est dans le header, donc si tu cliques sur header ça doit pas fermer
+        // on ferme seulement si on clique vraiment en dehors du panneau
+        if (mm && !mm.contains(target)) {
+          // clique hors panneau => ferme
+          setOpen(false);
+          setOwnerOpen(false);
+        }
       }
     };
 
-    // capture = true pour être sûr de capter avant navigation/click
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [ownerOpen]);
+  }, [ownerOpen, open]);
 
   // Helpers stacked mobile
   const mobileLinkClass = (href: string) =>
@@ -98,7 +129,9 @@ export default function NavbarClient() {
 
   // Propriétaire: actif si une des pages est active
   const ownerActive =
-    isActive("/my-parkings") || isActive("/my-parkings/bookings");
+    isActive("/my-parkings") ||
+    isActive("/my-parkings/bookings") ||
+    isActive("/owner/payouts");
 
   // Bouton accordéon propriétaire (visuel clair)
   const ownerTriggerClass = [
@@ -142,30 +175,21 @@ export default function NavbarClient() {
             <Link className={navClass("/map")} href="/map" onClick={closeAll}>
               Carte
             </Link>
-            <Link
-              className={navClass("/parkings")}
-              href="/parkings"
-              onClick={closeAll}
-            >
+
+            <Link className={navClass("/parkings")} href="/parkings" onClick={closeAll}>
               Parkings
             </Link>
-            <Link
-              className={navClass("/messages")}
-              href="/messages"
-              onClick={closeAll}
-            >
+
+            <Link className={navClass("/messages")} href="/messages" onClick={closeAll}>
               {MessagesLabel}
             </Link>
-            <Link
-              className={navClass("/my-bookings")}
-              href="/my-bookings"
-              onClick={closeAll}
-            >
+
+            <Link className={navClass("/my-bookings")} href="/my-bookings" onClick={closeAll}>
               Réservations
             </Link>
 
             {/* ✅ Groupe Propriétaire (desktop) */}
-            <div className="relative" ref={ownerWrapRef}>
+            <div className="relative" ref={ownerWrapDesktopRef}>
               <button
                 type="button"
                 className={ownerTriggerClass}
@@ -193,13 +217,11 @@ export default function NavbarClient() {
               {ownerOpen ? (
                 <div
                   id="owner-submenu-desktop"
-                  className="absolute left-0 mt-2 w-56 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur shadow-lg p-2 z-50"
+                  className="absolute left-0 mt-2 w-64 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur shadow-lg p-2 z-50"
                 >
                   <div className="flex flex-col gap-1">
                     <Link
-                      className={[navClass("/my-parkings"), "w-full block"].join(
-                        " "
-                      )}
+                      className={[navClass("/my-parkings"), "w-full block"].join(" ")}
                       href="/my-parkings"
                       onClick={() => {
                         closeOwnerOnly();
@@ -210,10 +232,7 @@ export default function NavbarClient() {
                     </Link>
 
                     <Link
-                      className={[
-                        navClass("/my-parkings/bookings"),
-                        "w-full block",
-                      ].join(" ")}
+                      className={[navClass("/my-parkings/bookings"), "w-full block"].join(" ")}
                       href="/my-parkings/bookings"
                       onClick={() => {
                         closeOwnerOnly();
@@ -221,6 +240,17 @@ export default function NavbarClient() {
                       }}
                     >
                       Réservations (mes places)
+                    </Link>
+
+                    <Link
+                      className={[navClass("/owner/payouts"), "w-full block"].join(" ")}
+                      href="/owner/payouts"
+                      onClick={() => {
+                        closeOwnerOnly();
+                        closeAll();
+                      }}
+                    >
+                      Configurer mes paiements
                     </Link>
                   </div>
                 </div>
@@ -281,35 +311,29 @@ export default function NavbarClient() {
 
       {/* Mobile menu */}
       {open && (
-        <div className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
+        <div
+          ref={mobileMenuRef}
+          className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur"
+        >
           <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
             <Link className={mobileLinkClass("/map")} href="/map" onClick={closeAll}>
               Carte
             </Link>
-            <Link
-              className={mobileLinkClass("/parkings")}
-              href="/parkings"
-              onClick={closeAll}
-            >
+
+            <Link className={mobileLinkClass("/parkings")} href="/parkings" onClick={closeAll}>
               Parkings
             </Link>
-            <Link
-              className={mobileLinkClass("/messages")}
-              href="/messages"
-              onClick={closeAll}
-            >
+
+            <Link className={mobileLinkClass("/messages")} href="/messages" onClick={closeAll}>
               {MessagesLabel}
             </Link>
-            <Link
-              className={mobileLinkClass("/my-bookings")}
-              href="/my-bookings"
-              onClick={closeAll}
-            >
+
+            <Link className={mobileLinkClass("/my-bookings")} href="/my-bookings" onClick={closeAll}>
               Réservations
             </Link>
 
             {/* ✅ Accordéon Propriétaire (mobile) */}
-            <div className="pt-1" ref={ownerWrapRef}>
+            <div className="pt-1" ref={ownerWrapMobileRef}>
               <button
                 type="button"
                 className={[ownerTriggerClass, "w-full", "text-left"].join(" ")}
@@ -339,9 +363,7 @@ export default function NavbarClient() {
                   className="mt-2 ml-2 pl-3 border-l border-slate-200/70 flex flex-col gap-2"
                 >
                   <Link
-                    className={["w-full block", mobileLinkClass("/my-parkings")].join(
-                      " "
-                    )}
+                    className={mobileLinkClass("/my-parkings")}
                     href="/my-parkings"
                     onClick={closeAll}
                   >
@@ -349,25 +371,26 @@ export default function NavbarClient() {
                   </Link>
 
                   <Link
-                    className={[
-                      "w-full block",
-                      mobileLinkClass("/my-parkings/bookings"),
-                    ].join(" ")}
+                    className={mobileLinkClass("/my-parkings/bookings")}
                     href="/my-parkings/bookings"
                     onClick={closeAll}
                   >
                     Réservations (mes places)
+                  </Link>
+
+                  <Link
+                    className={mobileLinkClass("/owner/payouts")}
+                    href="/owner/payouts"
+                    onClick={closeAll}
+                  >
+                    Configurer mes paiements
                   </Link>
                 </div>
               ) : null}
             </div>
 
             <div className="pt-2 flex flex-col gap-2">
-              <Link
-                href="/parkings/new"
-                className={btnPrimaryPill}
-                onClick={closeAll}
-              >
+              <Link href="/parkings/new" className={btnPrimaryPill} onClick={closeAll}>
                 Proposer ma place
               </Link>
 

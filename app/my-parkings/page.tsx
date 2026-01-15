@@ -31,6 +31,17 @@ type ParkingRow = {
   created_at: string;
 };
 
+type StripeStatusOk = {
+  ok: true;
+  stripeAccountId: string | null;
+  detailsSubmitted: boolean;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+};
+
+type StripeStatusErr = { ok: false; error: string; detail?: string };
+type StripeStatusResp = StripeStatusOk | StripeStatusErr;
+
 function typeLabel(t: ParkingRow["parking_type"]) {
   if (t === "indoor") return "Intérieur";
   if (t === "garage") return "Garage";
@@ -48,6 +59,12 @@ export default function MyParkingsPage() {
   const [rows, setRows] = useState<ParkingRow[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ✅ Stripe Connect status
+  const [stripeStatus, setStripeStatus] = useState<StripeStatusOk | null>(null);
+  const [stripeLoading, setStripeLoading] = useState(false);
+  const [stripeErr, setStripeErr] = useState<string | null>(null);
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
 
   const load = async () => {
     if (!session) return;
@@ -92,10 +109,79 @@ export default function MyParkingsPage() {
     setLoading(false);
   };
 
+  const fetchStripeStatus = async () => {
+    if (!session) return;
+
+    setStripeLoading(true);
+    setStripeErr(null);
+
+    try {
+      const res = await fetch("/api/stripe/connect/status", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      const json = (await res.json().catch(() => ({}))) as StripeStatusResp;
+
+      if (!res.ok || !("ok" in json) || json.ok === false) {
+        const msg = "error" in json ? json.error : `Erreur (${res.status})`;
+        const detail = "detail" in json ? json.detail : undefined;
+        setStripeErr(detail ? `${msg} — ${detail}` : msg);
+        setStripeStatus(null);
+        setStripeLoading(false);
+        return;
+      }
+
+      setStripeStatus(json);
+      setStripeLoading(false);
+    } catch (e: unknown) {
+      setStripeErr(e instanceof Error ? e.message : "Erreur inconnue (Stripe status)");
+      setStripeStatus(null);
+      setStripeLoading(false);
+    }
+  };
+
+  const startOnboarding = async () => {
+    if (!session) return;
+
+    setOnboardingLoading(true);
+    setStripeErr(null);
+
+    try {
+      const res = await fetch("/api/stripe/connect/onboarding", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        url?: string;
+        error?: string;
+        detail?: string;
+      };
+
+      if (!res.ok || !json.ok || !json.url) {
+        const msg = json.error ?? `Erreur onboarding (${res.status})`;
+        const detail = json.detail;
+        setStripeErr(detail ? `${msg} — ${detail}` : msg);
+        setOnboardingLoading(false);
+        return;
+      }
+
+      // ✅ redirection vers Stripe
+      window.location.href = json.url;
+    } catch (e: unknown) {
+      setStripeErr(e instanceof Error ? e.message : "Erreur inconnue (onboarding)");
+      setOnboardingLoading(false);
+    }
+  };
+
   // ✅ évite la règle ESLint “set-state-in-effect”
   useEffect(() => {
     if (!ready || !session) return;
-    queueMicrotask(() => void load());
+    queueMicrotask(() => {
+      void load();
+      void fetchStripeStatus();
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, session]);
 
@@ -103,6 +189,15 @@ export default function MyParkingsPage() {
     () => rows.filter((r) => r.is_active).length,
     [rows]
   );
+
+  const payoutsReady = Boolean(
+    stripeStatus?.chargesEnabled && stripeStatus?.payoutsEnabled
+  );
+
+  const Btn = {
+    primary: `${UI.btnBase} ${UI.btnPrimary}`,
+    ghost: `${UI.btnBase} ${UI.btnGhost}`,
+  };
 
   return (
     <main className={`${UI.page}`}>
@@ -124,21 +219,21 @@ export default function MyParkingsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Link
-              href="/parkings/new"
-              className={`${UI.btnBase} ${UI.btnPrimary}`}
-            >
+            <Link href="/parkings/new" className={Btn.primary}>
               + Proposer une place
             </Link>
 
             <button
               type="button"
-              onClick={() => void load()}
-              disabled={!session || loading}
-              className={`${UI.btnBase} ${UI.btnGhost}`}
+              onClick={() => {
+                void load();
+                void fetchStripeStatus();
+              }}
+              disabled={!session || loading || stripeLoading}
+              className={Btn.ghost}
               title={!session ? "Connecte-toi d’abord" : "Rafraîchir"}
             >
-              {loading ? "…" : "Rafraîchir"}
+              {loading || stripeLoading ? "…" : "Rafraîchir"}
             </button>
           </div>
         </div>
@@ -150,23 +245,76 @@ export default function MyParkingsPage() {
           </div>
         ) : !session ? (
           <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
-            <p className={UI.p}>
-              Tu dois être connecté pour voir tes places.
-            </p>
+            <p className={UI.p}>Tu dois être connecté pour voir tes places.</p>
             <div className="flex gap-2">
-              <Link
-                href="/login"
-                className={`${UI.btnBase} ${UI.btnPrimary}`}
-              >
+              <Link href="/login" className={Btn.primary}>
                 Se connecter
               </Link>
-              <Link href="/parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>
+              <Link href="/parkings" className={Btn.ghost}>
                 Parcourir les places
               </Link>
             </div>
           </div>
         ) : (
           <>
+            {/* ✅ GROS BLOC Stripe si pas prêt */}
+            {!payoutsReady ? (
+              <div className={`${UI.card} ${UI.cardPad} space-y-4 border-amber-200 bg-amber-50/60`}>
+                <div className="space-y-1">
+                  <div className="text-base font-semibold text-slate-900">
+                    ⚠️ Configurer mes paiements
+                  </div>
+                  <p className="text-sm text-slate-700">
+                    Pour recevoir automatiquement l’argent des réservations, tu dois finaliser{" "}
+                    <b>Stripe Connect (Express)</b> : IBAN, infos légales, etc.
+                  </p>
+                </div>
+
+                {stripeErr ? (
+                  <p className="text-sm text-rose-700">Erreur : {stripeErr}</p>
+                ) : null}
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    className={Btn.primary}
+                    onClick={() => void startOnboarding()}
+                    disabled={onboardingLoading}
+                  >
+                    {onboardingLoading ? "Redirection…" : "Configurer mes paiements (Stripe)"}
+                  </button>
+
+                  <Link href="/owner/payouts" className={Btn.ghost}>
+                    Voir le statut →
+                  </Link>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-xs text-slate-700">
+                  <span className={UI.chip}>
+                    Dossier envoyé : <b>{stripeStatus?.detailsSubmitted ? "Oui" : "Non"}</b>
+                  </span>
+                  <span className={UI.chip}>
+                    Paiements : <b>{stripeStatus?.chargesEnabled ? "OK" : "Non"}</b>
+                  </span>
+                  <span className={UI.chip}>
+                    Virements : <b>{stripeStatus?.payoutsEnabled ? "OK" : "Non"}</b>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className={`${UI.card} ${UI.cardPad} flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-emerald-200 bg-emerald-50/60`}>
+                <div className="space-y-1">
+                  <div className="font-semibold text-slate-900">✅ Paiements configurés</div>
+                  <p className="text-sm text-slate-700">
+                    Stripe Connect est prêt. Tu peux recevoir tes virements automatiquement.
+                  </p>
+                </div>
+                <Link href="/owner/payouts" className={Btn.ghost}>
+                  Gérer mes paiements →
+                </Link>
+              </div>
+            )}
+
             {/* Error */}
             {error ? (
               <div className={`${UI.card} ${UI.cardPad}`}>
@@ -286,13 +434,10 @@ export default function MyParkingsPage() {
                   Crée ta première annonce (photos + carte + options).
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Link
-                    href="/parkings/new"
-                    className={`${UI.btnBase} ${UI.btnPrimary}`}
-                  >
+                  <Link href="/parkings/new" className={Btn.primary}>
                     + Proposer une place
                   </Link>
-                  <Link href="/map" className={`${UI.btnBase} ${UI.btnGhost}`}>
+                  <Link href="/map" className={Btn.ghost}>
                     Voir la carte
                   </Link>
                 </div>

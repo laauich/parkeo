@@ -17,12 +17,11 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
-export async function POST(req: Request) {
+export async function GET(req: Request) {
   try {
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
     const anonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
     const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
-    const baseUrl = env("APP_BASE_URL").replace(/\/$/, "");
 
     const token = getBearerToken(req);
     if (!token) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -33,9 +32,7 @@ export async function POST(req: Request) {
     });
 
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-    if (uErr || !u?.user) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+    if (uErr || !u?.user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
@@ -45,42 +42,36 @@ export async function POST(req: Request) {
       .eq("id", u.user.id)
       .maybeSingle();
 
-    if (pErr) {
-      return NextResponse.json({ ok: false, error: "DB error", detail: pErr.message }, { status: 500 });
-    }
+    if (pErr) return NextResponse.json({ ok: false, error: "DB error", detail: pErr.message }, { status: 500 });
 
-    let stripeAccountId = profile?.stripe_account_id ?? null;
+    const stripeAccountId = profile?.stripe_account_id ?? null;
 
-    // ✅ Si pas de compte Stripe Connect -> on le crée (Express)
+    // Pas encore de compte
     if (!stripeAccountId) {
-      const acct = await stripe.accounts.create({
-        type: "express",
-        metadata: { userId: u.user.id },
-      });
-
-      stripeAccountId = acct.id;
-
-      const { error: upErr } = await admin
-        .from("profiles")
-        .update({ stripe_account_id: stripeAccountId })
-        .eq("id", u.user.id);
-
-      if (upErr) {
-        return NextResponse.json(
-          { ok: false, error: "DB update failed", detail: upErr.message },
-          { status: 500 }
-        );
-      }
+      return NextResponse.json(
+        {
+          ok: true,
+          stripeAccountId: null,
+          detailsSubmitted: false,
+          chargesEnabled: false,
+          payoutsEnabled: false,
+        },
+        { status: 200 }
+      );
     }
 
-    const link = await stripe.accountLinks.create({
-      account: stripeAccountId,
-      type: "account_onboarding",
-      refresh_url: `${baseUrl}/owner/payouts?refresh=1`,
-      return_url: `${baseUrl}/owner/payouts?return=1`,
-    });
+    const acct = await stripe.accounts.retrieve(stripeAccountId);
 
-    return NextResponse.json({ ok: true, url: link.url }, { status: 200 });
+    return NextResponse.json(
+      {
+        ok: true,
+        stripeAccountId,
+        detailsSubmitted: Boolean(acct.details_submitted),
+        chargesEnabled: Boolean(acct.charges_enabled),
+        payoutsEnabled: Boolean(acct.payouts_enabled),
+      },
+      { status: 200 }
+    );
   } catch (e: unknown) {
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "Server error" },
