@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { stripe } from "@/app/lib/stripe";
+import { stripe } from "@app/lib/stripe"; // ✅ IMPORTANT: ajuste si ton fichier est dans app/lib
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +39,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
 
     // récupère le stripe_account_id existant
     const { data: profile, error: pErr } = await admin
@@ -49,21 +51,34 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (pErr) {
-      return NextResponse.json({ ok: false, error: "DB error", detail: pErr.message }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "DB error", detail: pErr.message },
+        { status: 500 }
+      );
     }
 
     if (profile?.stripe_account_id) {
-      return NextResponse.json({ ok: true, stripeAccountId: profile.stripe_account_id }, { status: 200 });
+      return NextResponse.json(
+        { ok: true, stripeAccountId: profile.stripe_account_id },
+        { status: 200 }
+      );
     }
 
-    // crée un compte Express
+    // ✅ crée un compte Express en "individual" (particulier)
     const account = await stripe.accounts.create({
       type: "express",
+      country: "CH",
+      email: u.user.email ?? undefined, // ✅ user -> u.user
+      business_type: "individual",
       capabilities: {
         card_payments: { requested: true },
         transfers: { requested: true },
       },
-      metadata: { user_id: u.user.id },
+      // optionnel: helpful pour l'UI Stripe
+      metadata: {
+        userId: u.user.id,
+        app: "parkeo",
+      },
     });
 
     const { error: upErr } = await admin
@@ -72,7 +87,10 @@ export async function POST(req: Request) {
       .eq("id", u.user.id);
 
     if (upErr) {
-      return NextResponse.json({ ok: false, error: "DB update failed", detail: upErr.message }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "DB update failed", detail: upErr.message },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ ok: true, stripeAccountId: account.id }, { status: 200 });
