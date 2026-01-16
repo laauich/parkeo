@@ -1,4 +1,3 @@
-// app/api/stripe/connect/create/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { stripe } from "@/app/lib/stripe";
@@ -29,47 +28,43 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // user via token
+    // Auth user
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
     });
 
-    const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-    if (uErr || !u.user) {
+    const { data, error } = await supabaseAuth.auth.getUser();
+    if (error || !data?.user) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const userId = u.user.id;
-    const userEmail = u.user.email ?? undefined;
+    const user = data.user;
 
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
 
-    // récupère le stripe_account_id existant
-    const { data: profile, error: pErr } = await admin
+    // Check existing Stripe account
+    const { data: profile } = await admin
       .from("profiles")
       .select("stripe_account_id")
-      .eq("id", userId)
+      .eq("id", user.id)
       .maybeSingle();
 
-    if (pErr) {
-      return NextResponse.json(
-        { ok: false, error: "DB error", detail: pErr.message },
-        { status: 500 }
-      );
-    }
-
     if (profile?.stripe_account_id) {
-      return NextResponse.json({ ok: true, stripeAccountId: profile.stripe_account_id }, { status: 200 });
+      return NextResponse.json({
+        ok: true,
+        stripeAccountId: profile.stripe_account_id,
+        alreadyExists: true,
+      });
     }
 
-    // crée un compte Express (particulier)
+    // ✅ CREATE STRIPE EXPRESS — INDIVIDUAL
     const account = await stripe.accounts.create({
       type: "express",
       country: "CH",
-      email: userEmail,
+      email: user.email ?? undefined,
       business_type: "individual",
       capabilities: {
         card_payments: { requested: true },
@@ -77,19 +72,15 @@ export async function POST(req: Request) {
       },
     });
 
-    const { error: upErr } = await admin
+    await admin
       .from("profiles")
       .update({ stripe_account_id: account.id })
-      .eq("id", userId);
+      .eq("id", user.id);
 
-    if (upErr) {
-      return NextResponse.json(
-        { ok: false, error: "DB update failed", detail: upErr.message },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({ ok: true, stripeAccountId: account.id }, { status: 200 });
+    return NextResponse.json({
+      ok: true,
+      stripeAccountId: account.id,
+    });
   } catch (e: unknown) {
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "Server error" },
