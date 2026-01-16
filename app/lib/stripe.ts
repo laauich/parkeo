@@ -7,6 +7,11 @@ function mustEnv(name: string) {
   return v;
 }
 
+function envOptional(name: string) {
+  const v = process.env[name];
+  return v && v.trim() ? v.trim() : null;
+}
+
 /**
  * ✅ IMPORTANT:
  * Ne PAS mettre apiVersion ici, sinon TS casse si ton SDK Stripe
@@ -18,9 +23,27 @@ export function toCents(amount: number) {
   return Math.round(amount * 100);
 }
 
+/**
+ * Base URL de l'app (prod / preview / local)
+ * - Recommandé: APP_BASE_URL (ex: https://parkeo.vercel.app)
+ * - Fallback: NEXT_PUBLIC_APP_BASE_URL (si tu veux)
+ * - Fallback Vercel: VERCEL_URL (sans protocole) => on ajoute https://
+ */
 export function getAppUrl() {
-  const base = mustEnv("APP_BASE_URL").replace(/\/$/, "");
-  return base;
+  const fromAppBase = envOptional("APP_BASE_URL");
+  if (fromAppBase) return fromAppBase.replace(/\/$/, "");
+
+  const fromPublic = envOptional("NEXT_PUBLIC_APP_BASE_URL");
+  if (fromPublic) return fromPublic.replace(/\/$/, "");
+
+  const vercelUrl = envOptional("VERCEL_URL");
+  if (vercelUrl) {
+    const base = vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`;
+    return base.replace(/\/$/, "");
+  }
+
+  // Dernier recours: throw (ça évite des URLs Stripe invalides)
+  throw new Error("ENV manquante: APP_BASE_URL");
 }
 
 export function appUrl(path: string) {
@@ -57,7 +80,9 @@ export async function createBookingCheckoutSession(args: {
   if (totalCents <= 0) throw new Error("Montant total invalide");
 
   const feeCents =
-    args.platformFeeAmount != null ? Math.max(0, toCents(args.platformFeeAmount)) : 0;
+    args.platformFeeAmount != null
+      ? Math.max(0, toCents(args.platformFeeAmount))
+      : 0;
 
   const applicationFeeAmount = Math.min(feeCents, totalCents);
 

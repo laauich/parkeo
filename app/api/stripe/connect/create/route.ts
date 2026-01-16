@@ -1,6 +1,7 @@
+// app/api/stripe/connect/create/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { stripe } from "@/app/lib/stripe"; // ✅ IMPORTANT: ajuste si ton fichier est dans app/lib
+import { stripe } from "@/app/lib/stripe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +40,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
+    const userId = u.user.id;
+    const userEmail = u.user.email ?? undefined;
+
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
@@ -47,7 +51,7 @@ export async function POST(req: Request) {
     const { data: profile, error: pErr } = await admin
       .from("profiles")
       .select("stripe_account_id")
-      .eq("id", u.user.id)
+      .eq("id", userId)
       .maybeSingle();
 
     if (pErr) {
@@ -58,33 +62,25 @@ export async function POST(req: Request) {
     }
 
     if (profile?.stripe_account_id) {
-      return NextResponse.json(
-        { ok: true, stripeAccountId: profile.stripe_account_id },
-        { status: 200 }
-      );
+      return NextResponse.json({ ok: true, stripeAccountId: profile.stripe_account_id }, { status: 200 });
     }
 
-    // ✅ crée un compte Express en "individual" (particulier)
+    // crée un compte Express (particulier)
     const account = await stripe.accounts.create({
       type: "express",
       country: "CH",
-      email: u.user.email ?? undefined, // ✅ user -> u.user
+      email: userEmail,
       business_type: "individual",
       capabilities: {
         card_payments: { requested: true },
         transfers: { requested: true },
-      },
-      // optionnel: helpful pour l'UI Stripe
-      metadata: {
-        userId: u.user.id,
-        app: "parkeo",
       },
     });
 
     const { error: upErr } = await admin
       .from("profiles")
       .update({ stripe_account_id: account.id })
-      .eq("id", u.user.id);
+      .eq("id", userId);
 
     if (upErr) {
       return NextResponse.json(
