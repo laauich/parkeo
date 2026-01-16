@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { stripe } from "@app/lib/stripe"; // ✅ IMPORTANT: ajuste si ton fichier est dans app/lib
+import { stripe } from "@/app/lib/stripe"; // ✅ IMPORTANT: ajuste si ton fichier est dans app/lib
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
