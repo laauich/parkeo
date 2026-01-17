@@ -24,8 +24,18 @@ export function toCents(amount: number) {
 }
 
 /**
+ * Commission Parkeo par défaut (15%)
+ * - appliquée si platformFeeAmount n'est pas fourni
+ */
+export const PLATFORM_FEE_PERCENT = 0.15;
+
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
+
+/**
  * Base URL de l'app (prod / preview / local)
- * - Recommandé: APP_BASE_URL (ex: https://parkeo.vercel.app)
+ * - Recommandé: APP_BASE_URL (ex: https://parkeo.ch)
  * - Fallback: NEXT_PUBLIC_APP_BASE_URL (si tu veux)
  * - Fallback Vercel: VERCEL_URL (sans protocole) => on ajoute https://
  */
@@ -56,6 +66,10 @@ export function appUrl(path: string) {
  * ✅ Checkout + Stripe Connect (destination charge)
  * Parkeo encaisse, Stripe transfère automatiquement vers l’owner (acct_...)
  * Parkeo garde la commission via application_fee_amount
+ *
+ * ✅ Commission:
+ * - si args.platformFeeAmount fourni -> on utilise ce montant
+ * - sinon -> 15% du total (PLATFORM_FEE_PERCENT)
  */
 export async function createBookingCheckoutSession(args: {
   bookingId: string;
@@ -65,26 +79,34 @@ export async function createBookingCheckoutSession(args: {
   currency?: string | null;
 
   connectedAccountId: string; // acct_...
-  platformFeeAmount?: number; // commission Parkeo (même devise)
+  platformFeeAmount?: number; // commission Parkeo (même devise) - optionnel
   successPath?: string;
   cancelPath?: string;
 
   customerEmail?: string | null;
 }) {
   const currency = (args.currency ?? "CHF").toLowerCase();
-  const totalCents = toCents(args.amountTotal);
 
   if (!args.connectedAccountId?.startsWith("acct_")) {
     throw new Error("connectedAccountId invalide (attendu acct_...)");
   }
+
+  if (typeof args.amountTotal !== "number" || Number.isNaN(args.amountTotal)) {
+    throw new Error("amountTotal invalide");
+  }
+
+  const totalCents = toCents(args.amountTotal);
   if (totalCents <= 0) throw new Error("Montant total invalide");
 
-  const feeCents =
+  // ✅ fee par défaut = 15% si pas fourni
+  const feeAmount =
     args.platformFeeAmount != null
-      ? Math.max(0, toCents(args.platformFeeAmount))
-      : 0;
+      ? args.platformFeeAmount
+      : args.amountTotal * PLATFORM_FEE_PERCENT;
 
-  const applicationFeeAmount = Math.min(feeCents, totalCents);
+  // ✅ conversion + clamp: jamais <0 et jamais > total
+  const feeCents = clamp(toCents(feeAmount), 0, totalCents);
+  const applicationFeeAmount = feeCents;
 
   const successUrl = appUrl(args.successPath ?? "/my-bookings?success=1");
   const cancelUrl = appUrl(args.cancelPath ?? "/my-bookings?canceled=1");
@@ -113,11 +135,18 @@ export async function createBookingCheckoutSession(args: {
     ],
 
     payment_intent_data: {
+      // ✅ Parkeo prend 15% (ou montant fourni)
       application_fee_amount: applicationFeeAmount,
+
+      // ✅ le reste va à l’owner automatiquement
       transfer_data: { destination: args.connectedAccountId },
+
       metadata: {
         bookingId: args.bookingId,
         connectedAccountId: args.connectedAccountId,
+        platformFeePercent: String(PLATFORM_FEE_PERCENT),
+        platformFeeCents: String(applicationFeeAmount),
+        totalCents: String(totalCents),
       },
     },
   });

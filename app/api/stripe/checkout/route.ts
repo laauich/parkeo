@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
-import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
+import {
+  createBookingCheckoutSession,
+  getAppUrl,
+} from "@/app/lib/stripe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,122 +14,158 @@ function env(name: string) {
   return v;
 }
 
-function siteUrl() {
-  // Recommandé : NEXT_PUBLIC_SITE_URL dans Vercel
-  // En dev: https://parkeo.ch
-  const v = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (v) return v.replace(/\/+$/, "");
-  return "https://parkeo.ch";
+function getBearerToken(req: Request) {
+  const auth = req.headers.get("authorization") || "";
+  if (!auth.startsWith("Bearer ")) return null;
+  return auth.slice(7);
 }
 
 type Body = {
   bookingId?: string;
-  parkingTitle?: string;
-  amountChf?: number; // CHF
-  currency?: string; // "chf"
 };
 
 export async function POST(req: Request) {
   try {
-    const stripeKey = env("STRIPE_SECRET_KEY");
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
+    const anonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
     const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
-    const body = (await req.json()) as Body;
-    const bookingId = body.bookingId;
-    const amountChf = typeof body.amountChf === "number" ? body.amountChf : null;
+    const token = getBearerToken(req);
+    if (!token) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
 
-    if (!bookingId || amountChf === null || Number.isNaN(amountChf) || amountChf <= 0) {
+    const body = (await req.json().catch(() => ({}))) as Body;
+    const bookingId = body.bookingId?.trim();
+    if (!bookingId) {
       return NextResponse.json(
-        { error: "Missing/invalid fields", expected: ["bookingId", "amountChf>0"] },
+        { ok: false, error: "Missing/invalid fields", expected: ["bookingId"] },
         { status: 400 }
       );
     }
 
-    const currency = (body.currency ?? "chf").toLowerCase();
-    const amountCents = Math.round(amountChf * 100);
-
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" });
-
-    // On récupère la réservation pour vérifier qu'elle existe
-    const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+    // 1) Auth user (pour vérifier que c’est bien le client de la réservation)
+    const supabaseAuth = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
     });
 
-    const { data: booking, error: bErr } = await supabaseAdmin
+    const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
+    if (uErr || !u.user) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    // 2) Admin (service role)
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
+
+    // 3) Charger booking + parking (on prend le prix depuis la DB, pas depuis le client)
+    const { data: booking, error: bErr } = await admin
       .from("bookings")
-      .select("id,status,payment_status,total_price,currency,parking_id")
+      .select(
+        `
+        id,
+        user_id,
+        status,
+        payment_status,
+        total_price,
+        currency,
+        parking_id,
+        parkings:parking_id ( id, title, owner_id )
+      `
+      )
       .eq("id", bookingId)
       .maybeSingle();
 
     if (bErr) {
-      return NextResponse.json({ error: bErr.message }, { status: 500 });
+      return NextResponse.json({ ok: false, error: "DB error", detail: bErr.message }, { status: 500 });
     }
     if (!booking) {
-      return NextResponse.json({ error: "Booking introuvable" }, { status: 404 });
+      return NextResponse.json({ ok: false, error: "Booking introuvable" }, { status: 404 });
     }
 
-    // Optionnel : empêcher checkout si déjà payé
-    if (booking.payment_status === "paid") {
+    // Vérifier que c’est bien le client qui paie sa réservation
+    if (booking.user_id !== u.user.id) {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+
+    // Empêcher checkout si déjà payé / déjà remboursé / annulé
+    const pay = (booking.payment_status ?? "").toLowerCase();
+    const st = (booking.status ?? "").toLowerCase();
+
+    if (pay === "paid" || pay === "refunded") {
+      return NextResponse.json({ ok: false, error: "Booking déjà payé" }, { status: 409 });
+    }
+    if (st === "cancelled") {
+      return NextResponse.json({ ok: false, error: "Booking annulé" }, { status: 409 });
+    }
+
+    const parking = Array.isArray(booking.parkings) ? booking.parkings[0] : booking.parkings;
+    if (!parking?.owner_id) {
+      return NextResponse.json({ ok: false, error: "Parking owner introuvable" }, { status: 500 });
+    }
+
+    // 4) Récupérer le compte Stripe Connect du propriétaire
+    const { data: ownerProfile, error: pErr } = await admin
+      .from("profiles")
+      .select("stripe_account_id, stripe_onboarding_complete, stripe_payouts_enabled")
+      .eq("id", parking.owner_id)
+      .maybeSingle();
+
+    if (pErr) {
+      return NextResponse.json({ ok: false, error: "DB error", detail: pErr.message }, { status: 500 });
+    }
+
+    const connectedAccountId = ownerProfile?.stripe_account_id ?? null;
+
+    // IMPORTANT: si pas de compte connect => impossible de payer (car on doit transférer au owner)
+    if (!connectedAccountId) {
       return NextResponse.json(
-        { error: "Booking déjà payé", bookingId },
-        { status: 409 }
+        { ok: false, error: "Owner Stripe non configuré", detail: "stripe_account_id manquant" },
+        { status: 400 }
       );
     }
 
-    const base = siteUrl();
-
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      line_items: [
+    // Optionnel mais conseillé: bloquer si onboarding/payouts pas OK
+    if (!ownerProfile?.stripe_onboarding_complete || !ownerProfile?.stripe_payouts_enabled) {
+      return NextResponse.json(
         {
-          quantity: 1,
-          price_data: {
-            currency,
-            unit_amount: amountCents,
-            product_data: {
-              name: body.parkingTitle
-                ? `Réservation — ${body.parkingTitle}`
-                : "Réservation parking",
-              description: `Booking ${bookingId}`,
-            },
-          },
+          ok: false,
+          error: "Owner Stripe incomplet",
+          detail: "Le propriétaire doit finaliser 'Configurer mes paiements' (payouts).",
         },
-      ],
-      // IMPORTANT : URLs
-      success_url: `${base}/payment/success?bookingId=${encodeURIComponent(
-        bookingId
-      )}&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${base}/payment/cancel?bookingId=${encodeURIComponent(
-        bookingId
-      )}`,
+        { status: 400 }
+      );
+    }
 
-      // Metadata utile webhook
-      metadata: {
-        bookingId,
-      },
+    // 5) Créer session Stripe Checkout via ton helper (15% automatique)
+    //    -> on ne passe PAS platformFeeAmount => 15% par défaut
+    const session = await createBookingCheckoutSession({
+      bookingId: booking.id,
+      parkingTitle: parking.title ?? "Réservation parking",
+      amountTotal: typeof booking.total_price === "number" ? booking.total_price : 0,
+      currency: booking.currency ?? "CHF",
+      connectedAccountId,
+      successPath: `/payment/success?bookingId=${encodeURIComponent(booking.id)}&session_id={CHECKOUT_SESSION_ID}`,
+      cancelPath: `/payment/cancel?bookingId=${encodeURIComponent(booking.id)}`,
+      customerEmail: u.user.email ?? null,
     });
-// Sauvegarde la session Stripe sur le booking (pour refunds)
-await supabaseAdmin
-  .from("bookings")
-  .update({ stripe_session_id: session.id })
-  .eq("id", bookingId);
 
-    // Sauvegarde session_id dans booking (pratique)
-    await supabaseAdmin
+    // 6) Sauvegarder la session ID (utile pour debug + retrieve)
+    await admin
       .from("bookings")
       .update({
         stripe_session_id: session.id,
         status: "pending_payment",
         payment_status: "unpaid",
       })
-      .eq("id", bookingId);
+      .eq("id", booking.id);
 
-    return NextResponse.json({ url: session.url }, { status: 200 });
+    return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
   } catch (e: unknown) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Server error" },
+      { ok: false, error: e instanceof Error ? e.message : "Server error" },
       { status: 500 }
     );
   }
