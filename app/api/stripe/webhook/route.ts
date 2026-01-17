@@ -11,38 +11,78 @@ function env(name: string) {
   return v;
 }
 
+function optionalEnv(name: string) {
+  const v = process.env[name];
+  return v && v.trim() ? v : null;
+}
+
 async function readRawBody(req: Request) {
-  // Stripe signature => RAW BYTES (le plus safe)
   const ab = await req.arrayBuffer();
   return Buffer.from(ab);
+}
+
+function constructEventWithFallback(args: {
+  stripe: Stripe;
+  rawBody: Buffer;
+  sig: string;
+  secrets: string[];
+}) {
+  const { stripe, rawBody, sig, secrets } = args;
+  let lastErr: unknown = null;
+
+  for (const secret of secrets) {
+    try {
+      return stripe.webhooks.constructEvent(rawBody, sig, secret);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("Invalid signature");
 }
 
 export async function POST(req: Request) {
   try {
     const stripeKey = env("STRIPE_SECRET_KEY");
-    const webhookSecret = env("STRIPE_WEBHOOK_SECRET");
+
+    // ✅ 2 destinations -> 2 secrets -> 1 URL
+    // Destination "Your account"
+    const platformSecret = optionalEnv("STRIPE_WEBHOOK_SECRET");
+
+    // Destination "Connected & v2 accounts"
+    const connectSecret = optionalEnv("STRIPE_CONNECT_WEBHOOK_SECRET");
+
+    if (!platformSecret && !connectSecret) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Missing webhook secrets. Set STRIPE_WEBHOOK_SECRET and/or STRIPE_CONNECT_WEBHOOK_SECRET",
+        },
+        { status: 500 }
+      );
+    }
+
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
     const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
-    // ⚠️ IMPORTANT
-    // Mets une version stable, sinon tu risques des comportements inattendus.
-    // Si tu veux garder la tienne, ok, mais je recommande une version standard.
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-12-15.clover" });
-
+    // ✅ IMPORTANT : ne pas forcer apiVersion ici -> évite tes erreurs TS ("...clover")
+    const stripe = new Stripe(stripeKey);
 
     const sig = req.headers.get("stripe-signature");
     if (!sig) {
-      return NextResponse.json(
-        { ok: false, error: "Missing stripe-signature" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Missing stripe-signature" }, { status: 400 });
     }
 
     const rawBody = await readRawBody(req);
 
     let event: Stripe.Event;
     try {
-      event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+      event = constructEventWithFallback({
+        stripe,
+        rawBody,
+        sig,
+        secrets: [platformSecret, connectSecret].filter(Boolean) as string[],
+      });
     } catch (err: unknown) {
       return NextResponse.json(
         { ok: false, error: err instanceof Error ? err.message : "Invalid signature" },
@@ -62,20 +102,17 @@ export async function POST(req: Request) {
 
       const bookingId =
         (session.metadata?.bookingId as string | undefined) ??
-        (typeof session.client_reference_id === "string"
-          ? session.client_reference_id
-          : undefined);
+        (typeof session.client_reference_id === "string" ? session.client_reference_id : undefined);
 
       if (!bookingId) {
-        // ⚠️ On renvoie 200 pour éviter que Stripe retry en boucle
+        // ✅ 200 pour éviter les retries Stripe
         return NextResponse.json(
           { ok: true, warning: "Missing bookingId in metadata/client_reference_id" },
           { status: 200 }
         );
       }
 
-      // ✅ très important pour les refunds :
-      // checkout.session.completed contient souvent payment_intent (string)
+      // ✅ Très important pour refunds owner/client
       const paymentIntentId =
         typeof session.payment_intent === "string"
           ? session.payment_intent
@@ -87,12 +124,12 @@ export async function POST(req: Request) {
           payment_status: "paid",
           status: "confirmed",
           stripe_session_id: session.id,
-          stripe_payment_intent_id: paymentIntentId, // ✅ FIX REFUND
+          stripe_payment_intent_id: paymentIntentId,
         })
         .eq("id", bookingId);
 
       if (error) {
-        // ⚠️ 200 quand même (sinon Stripe retry et tu risques double update)
+        // ✅ 200 quand même => pas de retry infini
         return NextResponse.json({ ok: true, db_error: error.message }, { status: 200 });
       }
 
@@ -104,11 +141,10 @@ export async function POST(req: Request) {
     // -----------------------------
     if (event.type === "checkout.session.expired") {
       const session = event.data.object as Stripe.Checkout.Session;
+
       const bookingId =
         (session.metadata?.bookingId as string | undefined) ??
-        (typeof session.client_reference_id === "string"
-          ? session.client_reference_id
-          : undefined);
+        (typeof session.client_reference_id === "string" ? session.client_reference_id : undefined);
 
       if (bookingId) {
         await supabaseAdmin
@@ -125,45 +161,44 @@ export async function POST(req: Request) {
     }
 
     // -----------------------------
-    // 3) Connect: account.updated (optionnel mais recommandé)
-    // Objectif: suivre si l’owner peut recevoir des payouts
+    // 3) Connect events (comptes propriétaires)
     // -----------------------------
-    if (event.type === "account.updated") {
+    if (event.type === "account.updated" || event.type === "capability.updated") {
       const account = event.data.object as Stripe.Account;
 
-      // Si tu stockes stripe_account_id dans "profiles" (ou "owners"), on peut mettre à jour
-      // Adapte le nom de table/colonnes à ta DB.
-      const stripeAccountId = account.id;
-
-      // Exemple: profiles(stripe_account_id, charges_enabled, payouts_enabled, details_submitted)
-      // Si tu n'as pas ces colonnes, commente cette partie.
-      await supabaseAdmin
-        .from("profiles")
-        .update({
-          stripe_charges_enabled: account.charges_enabled ?? false,
-          stripe_payouts_enabled: account.payouts_enabled ?? false,
-          stripe_details_submitted: account.details_submitted ?? false,
-          stripe_account_status_updated_at: new Date().toISOString(),
-        })
-        .eq("stripe_account_id", stripeAccountId);
+      // ✅ Best-effort: si tes colonnes n'existent pas, on n'explose pas le webhook.
+      try {
+        await supabaseAdmin
+          .from("profiles")
+          .update({
+            stripe_charges_enabled: account.charges_enabled ?? false,
+            stripe_payouts_enabled: account.payouts_enabled ?? false,
+            stripe_details_submitted: account.details_submitted ?? false,
+            stripe_account_status_updated_at: new Date().toISOString(),
+          })
+          .eq("stripe_account_id", account.id);
+      } catch {
+        // ignore
+      }
 
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
+    if (event.type === "payout.paid" || event.type === "payout.failed") {
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
     // -----------------------------
-    // 4) Refund: refund.updated (ou charge.refunded)
-    // Ça permet de marquer "refunded" proprement côté bookings
+    // 4) Refund sync
     // -----------------------------
     if (event.type === "refund.updated") {
       const refund = event.data.object as Stripe.Refund;
 
-      // refund.payment_intent peut être string
       const pi =
         typeof refund.payment_intent === "string"
           ? refund.payment_intent
           : refund.payment_intent?.id ?? null;
 
-      // On met à jour la réservation associée au payment_intent
       if (pi) {
         const status = refund.status; // "pending" | "succeeded" | "failed" | ...
         const refundStatus =
@@ -185,6 +220,7 @@ export async function POST(req: Request) {
 
     if (event.type === "charge.refunded") {
       const charge = event.data.object as Stripe.Charge;
+
       const pi =
         typeof charge.payment_intent === "string"
           ? charge.payment_intent
@@ -204,11 +240,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
-    // Default: on ignore proprement
+    // Default: ignore proprement
     return NextResponse.json({ ok: true, ignored: event.type }, { status: 200 });
   } catch (e: unknown) {
-    // ⚠️ Ici on peut renvoyer 200 si tu veux éviter les retries Stripe,
-    // mais je garde 500 car ça veut dire problème serveur.
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "Server error" },
       { status: 500 }
