@@ -17,8 +17,17 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
-type ApiOk = { ok: true; stripeAccountId: string; created?: boolean };
-type ApiErr = { ok: false; error: string; detail?: string };
+type ApiOk = {
+  ok: true;
+  stripeAccountId: string;
+  created: boolean;
+};
+
+type ApiErr = {
+  ok: false;
+  error: string;
+  detail?: string;
+};
 
 export async function POST(req: Request) {
   try {
@@ -26,13 +35,16 @@ export async function POST(req: Request) {
     const anonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
     const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
+    // 🔐 Auth header
     const token = getBearerToken(req);
     if (!token) {
-      const payload: ApiErr = { ok: false, error: "Unauthorized" };
-      return NextResponse.json(payload, { status: 401 });
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" } satisfies ApiErr,
+        { status: 401 }
+      );
     }
 
-    // user via token
+    // 🔐 User via Supabase Auth
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
@@ -40,18 +52,21 @@ export async function POST(req: Request) {
 
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
     if (uErr || !u.user) {
-      const payload: ApiErr = { ok: false, error: "Unauthorized", detail: uErr?.message };
-      return NextResponse.json(payload, { status: 401 });
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized", detail: uErr?.message } satisfies ApiErr,
+        { status: 401 }
+      );
     }
 
     const user = u.user;
     const email = user.email ?? undefined;
 
+    // 🔑 Admin Supabase
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
 
-    // récupère stripe_account_id existant
+    // 🔍 Check existing Stripe account
     const { data: profile, error: pErr } = await admin
       .from("profiles")
       .select("stripe_account_id")
@@ -59,54 +74,80 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (pErr) {
-      const payload: ApiErr = { ok: false, error: "DB error", detail: pErr.message };
-      return NextResponse.json(payload, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "DB error", detail: pErr.message } satisfies ApiErr,
+        { status: 500 }
+      );
     }
 
-    // si existe déjà => on renvoie tel quel
+    // ✅ Déjà existant → on renvoie
     if (profile?.stripe_account_id) {
-      const payload: ApiOk = { ok: true, stripeAccountId: profile.stripe_account_id, created: false };
-      return NextResponse.json(payload, { status: 200 });
+      return NextResponse.json(
+        {
+          ok: true,
+          stripeAccountId: profile.stripe_account_id,
+          created: false,
+        } satisfies ApiOk,
+        { status: 200 }
+      );
     }
 
-    // ✅ IMPORTANT : on force INDIVIDUAL dès la création
-    // NB: Stripe peut quand même afficher des champs “pro” (site web etc.) même pour individual,
-    // mais le statut du compte restera "individual" (particulier).
+    // =====================================================
+    // ✅ CRÉATION STRIPE CONNECT — PARTICULIER (INDIVIDUAL)
+    // =====================================================
     const account = await stripe.accounts.create({
       type: "express",
       country: "CH",
       email,
 
+      // 🔑 LE POINT CRUCIAL (bloque définitivement le mode entreprise)
       business_type: "individual",
 
-      // Pré-remplit pour éviter que Stripe insiste trop sur “site web”
-      // (Stripe peut quand même demander, mais au moins tu as un défaut valide)
+      // ⚠️ IMPORTANT : évite que Stripe exige une société
       business_profile: {
         url: getAppUrl(), // ex: https://parkeo.ch
-        product_description: "Location de places de parking entre particuliers.",
+        product_description: "Location de places de parking entre particuliers",
       },
 
       capabilities: {
         card_payments: { requested: true },
         transfers: { requested: true },
       },
+
+      metadata: {
+        userId: user.id,
+      },
     });
 
-    // stocke l'id dans profiles
+    // 💾 Sauvegarde en DB
     const { error: upErr } = await admin
       .from("profiles")
-      .update({ stripe_account_id: account.id })
+      .update({
+        stripe_account_id: account.id,
+        stripe_onboarding_complete: false,
+        stripe_updated_at: new Date().toISOString(),
+      })
       .eq("id", user.id);
 
     if (upErr) {
-      const payload: ApiErr = { ok: false, error: "DB update failed", detail: upErr.message };
-      return NextResponse.json(payload, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "DB update failed", detail: upErr.message } satisfies ApiErr,
+        { status: 500 }
+      );
     }
 
-    const payload: ApiOk = { ok: true, stripeAccountId: account.id, created: true };
-    return NextResponse.json(payload, { status: 200 });
+    return NextResponse.json(
+      {
+        ok: true,
+        stripeAccountId: account.id,
+        created: true,
+      } satisfies ApiOk,
+      { status: 200 }
+    );
   } catch (e: unknown) {
-    const payload: ApiErr = { ok: false, error: e instanceof Error ? e.message : "Server error" };
-    return NextResponse.json(payload, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : "Server error" } satisfies ApiErr,
+      { status: 500 }
+    );
   }
 }
