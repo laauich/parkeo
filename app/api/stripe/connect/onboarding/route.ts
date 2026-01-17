@@ -18,15 +18,20 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
+type Ensured = {
+  account: Stripe.Account;
+  replacedOld: boolean;
+  oldId: string | null;
+};
+
 async function ensureIndividualExpressAccount(args: {
   stripeAccountId: string | null;
   userId: string;
   email?: string | null;
-}) {
+}): Promise<Ensured> {
   const { stripeAccountId, userId, email } = args;
 
-  // 1) si pas d’account -> créer direct en individual
-  if (!stripeAccountId) {
+  const createIndividual = async (meta: Record<string, string | null>) => {
     const created = await stripe.accounts.create({
       type: "express",
       country: "CH",
@@ -40,65 +45,48 @@ async function ensureIndividualExpressAccount(args: {
         card_payments: { requested: true },
         transfers: { requested: true },
       },
-      metadata: { userId },
+      metadata: {
+        userId,
+        ...meta,
+      },
     });
 
+    return created;
+  };
+
+  // 1) pas d’account => on crée direct
+  if (!stripeAccountId) {
+    const created = await createIndividual({ replaced: null, oldAccountId: null });
     return { account: created, replacedOld: false, oldId: null };
   }
 
-  // 2) sinon récupérer et vérifier business_type
+  // 2) récupérer l’existant
   const existing = await stripe.accounts.retrieve(stripeAccountId);
 
-  // Stripe renvoie parfois deleted = true
-  // @ts-expect-error (Stripe types allow deleted accounts)
-  if ((existing as any)?.deleted) {
-    const created = await stripe.accounts.create({
-      type: "express",
-      country: "CH",
-      email: email ?? undefined,
-      business_type: "individual",
-      business_profile: {
-        url: getAppUrl(),
-        product_description: "Location de places de parking entre particuliers",
-      },
-      capabilities: {
-        card_payments: { requested: true },
-        transfers: { requested: true },
-      },
-      metadata: { userId, replaced: "deleted_account", oldAccountId: stripeAccountId },
-    });
+  // Stripe peut renvoyer "Stripe.DeletedAccount" dans certains cas
+  // -> on teste la présence de "deleted" via un guard robuste
+  const isDeleted =
+    typeof existing === "object" &&
+    existing !== null &&
+    "deleted" in existing &&
+    (existing as unknown as { deleted?: boolean }).deleted === true;
 
+  if (isDeleted) {
+    const created = await createIndividual({ replaced: "deleted_account", oldAccountId: stripeAccountId });
     return { account: created, replacedOld: true, oldId: stripeAccountId };
   }
 
-  // ✅ si déjà individual -> parfait
-  if (existing.business_type === "individual") {
-    return { account: existing, replacedOld: false, oldId: null };
+  // Ici, TypeScript sait que ce n’est pas DeletedAccount
+  const acct = existing as Stripe.Account;
+
+  // ✅ bon type => ok
+  if (acct.business_type === "individual") {
+    return { account: acct, replacedOld: false, oldId: null };
   }
 
-  /**
-   * ⚠️ IMPORTANT
-   * Si le compte est "company" ou autre, en pratique Stripe ne te permet pas
-   * toujours de basculer proprement business_type sur Express.
-   * Le plus fiable : recréer un compte propre en individual.
-   */
-  const created = await stripe.accounts.create({
-    type: "express",
-    country: "CH",
-    email: email ?? undefined,
-    business_type: "individual",
-    business_profile: {
-      url: getAppUrl(),
-      product_description: "Location de places de parking entre particuliers",
-    },
-    capabilities: {
-      card_payments: { requested: true },
-      transfers: { requested: true },
-    },
-    metadata: { userId, replaced: "wrong_business_type", oldAccountId: existing.id },
-  });
-
-  return { account: created, replacedOld: true, oldId: existing.id };
+  // ⚠️ si mauvais business_type => recrée un compte clean (le plus fiable)
+  const created = await createIndividual({ replaced: "wrong_business_type", oldAccountId: acct.id });
+  return { account: created, replacedOld: true, oldId: acct.id };
 }
 
 export async function POST(req: Request) {
@@ -125,7 +113,6 @@ export async function POST(req: Request) {
 
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-    // Load profile
     const { data: profile, error: pErr } = await admin
       .from("profiles")
       .select("stripe_account_id")
@@ -138,20 +125,20 @@ export async function POST(req: Request) {
 
     const currentStripeAccountId = profile?.stripe_account_id ?? null;
 
-    // ✅ Ensure account exists AND is business_type=individual
+    // ✅ ensure account exists + individual
     const ensured = await ensureIndividualExpressAccount({
       stripeAccountId: currentStripeAccountId,
       userId,
       email,
     });
 
-    const account = ensured.account as Stripe.Account;
+    const account = ensured.account;
     const stripeAccountId = account.id;
 
-    // ✅ Sync flags in Supabase (ça aide à voir l’état réel)
+    // ✅ flags DB (utile pour l’UI)
     const onboardingComplete = Boolean(account.details_submitted && account.payouts_enabled);
 
-    await admin
+    const { error: upErr } = await admin
       .from("profiles")
       .update({
         stripe_account_id: stripeAccountId,
@@ -163,7 +150,11 @@ export async function POST(req: Request) {
       })
       .eq("id", userId);
 
-    // Create account link
+    if (upErr) {
+      return NextResponse.json({ ok: false, error: "DB update failed", detail: upErr.message }, { status: 500 });
+    }
+
+    // ✅ account link
     const baseUrl = getAppUrl();
 
     const link = await stripe.accountLinks.create({
@@ -178,7 +169,7 @@ export async function POST(req: Request) {
         ok: true,
         url: link.url,
         stripeAccountId,
-        business_type: account.business_type, // pour debug => "individual"
+        business_type: account.business_type, // doit être "individual"
         replacedOldAccount: ensured.replacedOld,
         oldAccountId: ensured.oldId,
       },
