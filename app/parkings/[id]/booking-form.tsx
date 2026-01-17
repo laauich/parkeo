@@ -193,7 +193,7 @@ export default function BookingForm({
       // 2) stripe checkout
       const res2 = await fetch("/api/stripe/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json",Authorization: `Bearer ${session.access_token}`, },
         body: JSON.stringify({
           bookingId,
           parkingTitle,
