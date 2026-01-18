@@ -220,7 +220,7 @@ export default function OwnerBookingsGlobalPage() {
         cancelled_by,
         refund_status,
         refund_id,
-        parkings:parking_id ( id, title, address, photos, owner_id )
+        parkings:parking_id!inner ( id, title, address, photos, owner_id )
       `
       )
       .eq("parkings.owner_id", userId)
