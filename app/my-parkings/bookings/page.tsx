@@ -33,6 +33,9 @@ type BookingRow = {
   refund_status?: string | null; // refunded | requested | requested_owner | missing_intent | failed | none ...
   refund_id?: string | null;
 
+  // Option 2
+  owner_paid_out?: boolean | null;
+
   parkings?: ParkingJoin[] | ParkingJoin | null;
 };
 
@@ -46,9 +49,30 @@ type EnsureChatResponse = EnsureChatOk | EnsureChatErr;
 
 type TabKey = "upcoming" | "past" | "cancelled";
 
-const PLATFORM_FEE_PERCENT = 0.15; // ✅ commission Parkeo
+const PLATFORM_FEE_PERCENT = 0.15; // ✅ commission Parkeo (affichage seulement)
 const OWNER_NET_PERCENT = 1 - PLATFORM_FEE_PERCENT;
 
+// ===== Option 2: Wallet + Monthly (routes API) =====
+type WalletApiOk = {
+  ok: true;
+  currency: string;
+  pending: number;
+  available: number;
+  paidOut: number;
+  total: number;
+};
+type WalletApiErr = { ok: false; error: string; detail?: string };
+type WalletApiResponse = WalletApiOk | WalletApiErr;
+
+type MonthlyApiOk = {
+  ok: true;
+  currency: string;
+  items: Array<{ month: string; total: number }>;
+};
+type MonthlyApiErr = { ok: false; error: string; detail?: string };
+type MonthlyApiResponse = MonthlyApiOk | MonthlyApiErr;
+
+// ===== Helpers =====
 function getParkingFromJoin(join: BookingRow["parkings"]): ParkingJoin | null {
   if (!join) return null;
   if (Array.isArray(join)) return join[0] ?? null;
@@ -73,7 +97,6 @@ function money(v: number | null, currency?: string | null) {
   return `${v} ${(currency ?? "CHF").toUpperCase()}`;
 }
 
-// ✅ money “joli” pour gros compteur
 function moneyPretty(amount: number, currency?: string | null) {
   const cur = (currency ?? "CHF").toUpperCase();
   if (!Number.isFinite(amount)) return `— ${cur}`;
@@ -118,12 +141,10 @@ function isPast(b: BookingRow, nowMs: number) {
 }
 
 function canChat(b: BookingRow, nowMs: number) {
-  // règle demandée: pas de chat si passé OU annulé
   return !isCancelled(b) && !isPast(b, nowMs);
 }
 
 function canCancelOwner(b: BookingRow, nowMs: number) {
-  // règle demandée: pas d'annulation si passé OU annulé
   return !isCancelled(b) && !isPast(b, nowMs);
 }
 
@@ -131,7 +152,6 @@ function refundBadge(b: BookingRow) {
   const rs = (b.refund_status ?? "").toLowerCase();
   const paid = (b.payment_status ?? "").toLowerCase();
 
-  // Si tu n’as pas refund_status dans ta DB, on se base sur payment_status
   if (!rs) {
     if (paid === "refunded") return { label: "Remboursée", tone: "success" as const };
     if (paid === "refunding") return { label: "Remboursement en cours", tone: "warning" as const };
@@ -189,10 +209,7 @@ export default function OwnerBookingsGlobalPage() {
   >(undefined);
   const [modalTone, setModalTone] = useState<"success" | "warning" | "danger" | "info">("info");
 
-  // ✅ éviter double click / "2 fois"
   const [cancelLoadingId, setCancelLoadingId] = useState<string | null>(null);
-
-  // évite ConfirmModal derrière Détails
   const [returnToDetails, setReturnToDetails] = useState<BookingRow | null>(null);
 
   // ✅ onglets
@@ -206,6 +223,65 @@ export default function OwnerBookingsGlobalPage() {
     const t = setInterval(() => setNowMs(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
+
+  // ===== Option 2 states =====
+  const [wallet, setWallet] = useState<WalletApiOk | null>(null);
+  const [walletErr, setWalletErr] = useState<string | null>(null);
+
+  const [monthly, setMonthly] = useState<MonthlyApiOk | null>(null);
+  const [monthlyErr, setMonthlyErr] = useState<string | null>(null);
+
+  const loadWallet = async () => {
+    if (!session) return;
+    setWalletErr(null);
+    try {
+      const res = await fetch("/api/owner/wallet", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const json = (await res.json().catch(() => ({}))) as WalletApiResponse;
+      if (!res.ok || !json || ("ok" in json && json.ok === false)) {
+        const msg =
+          (json && "detail" in json && json.detail)
+            ? `${(json as WalletApiErr).error} — ${(json as WalletApiErr).detail}`
+            : (json && "error" in json && (json as WalletApiErr).error)
+              ? (json as WalletApiErr).error
+              : `Erreur portefeuille (${res.status})`;
+        setWalletErr(msg);
+        setWallet(null);
+        return;
+      }
+      setWallet(json as WalletApiOk);
+    } catch (e: unknown) {
+      setWalletErr(e instanceof Error ? e.message : "Erreur portefeuille");
+      setWallet(null);
+    }
+  };
+
+  const loadMonthly = async () => {
+    if (!session) return;
+    setMonthlyErr(null);
+    try {
+      const res = await fetch("/api/owner/earnings/monthly", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const json = (await res.json().catch(() => ({}))) as MonthlyApiResponse;
+      if (!res.ok || !json || ("ok" in json && json.ok === false)) {
+        const msg =
+          (json && "detail" in json && json.detail)
+            ? `${(json as MonthlyApiErr).error} — ${(json as MonthlyApiErr).detail}`
+            : (json && "error" in json && (json as MonthlyApiErr).error)
+              ? (json as MonthlyApiErr).error
+              : `Erreur graphique (${res.status})`;
+        setMonthlyErr(msg);
+        setMonthly(null);
+        return;
+      }
+      setMonthly(json as MonthlyApiOk);
+    } catch (e: unknown) {
+      setMonthlyErr(e instanceof Error ? e.message : "Erreur graphique");
+      setMonthly(null);
+    }
+  };
 
   const load = async () => {
     if (!ready) return;
@@ -239,6 +315,7 @@ export default function OwnerBookingsGlobalPage() {
         cancelled_by,
         refund_status,
         refund_id,
+        owner_paid_out,
         parkings:parking_id!inner ( id, title, address, photos, owner_id )
       `
       )
@@ -260,6 +337,9 @@ export default function OwnerBookingsGlobalPage() {
   useEffect(() => {
     if (!ready) return;
     queueMicrotask(() => void load());
+    // Option 2 loads
+    queueMicrotask(() => void loadWallet());
+    queueMicrotask(() => void loadMonthly());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, session?.user?.id]);
 
@@ -299,19 +379,14 @@ export default function OwnerBookingsGlobalPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, rows.length, upcoming.length, past.length, cancelled.length]);
 
-  // ✅ compteur “gains” owner (simple et motivant)
-  // - On compte uniquement les bookings payées ET non annulées
-  // - ownerGross: somme total_price
-  // - ownerNetEstimate: 85% (si tu prends 15%)
-  // - monthGross: ce mois-ci
-  const stats = useMemo(() => {
+  // ✅ fallback stats (si wallet route pas encore dispo)
+  const statsFallback = useMemo(() => {
     const paidRows = rows.filter((b) => {
       const paid = (b.payment_status ?? "").toLowerCase() === "paid";
       return paid && !isCancelled(b) && (b.total_price ?? 0) > 0;
     });
 
     const currency = (paidRows.find((b) => b.currency)?.currency ?? "CHF").toUpperCase();
-
     const gross = paidRows.reduce((acc, b) => acc + (b.total_price ?? 0), 0);
     const netEstimate = gross * OWNER_NET_PERCENT;
 
@@ -334,17 +409,17 @@ export default function OwnerBookingsGlobalPage() {
     };
   }, [rows, nowMs]);
 
+  // ===== Actions =====
   const openChat = async (bookingId: string) => {
     if (!session) return;
 
-    // ✅ blocage UI (et évite spam clic)
     const b = rows.find((x) => x.id === bookingId) ?? openBooking;
     if (b && !canChat(b, nowMs)) {
       setErr("Chat indisponible : réservation passée ou annulée.");
       return;
     }
 
-    if (chatLoadingId) return; // évite double click pendant chargement
+    if (chatLoadingId) return;
     setChatLoadingId(bookingId);
     setErr(null);
 
@@ -382,7 +457,6 @@ export default function OwnerBookingsGlobalPage() {
   const openOwnerCancelModal = (b: BookingRow) => {
     setErr(null);
 
-    // ✅ blocage UI (pas d'annulation si passée/annulée)
     if (!canCancelOwner(b, nowMs)) {
       setErr("Annulation impossible : réservation passée ou déjà annulée.");
       return;
@@ -390,7 +464,6 @@ export default function OwnerBookingsGlobalPage() {
 
     const s = ownerSummary(b);
 
-    // ferme Détails pour éviter modal derrière
     if (openBooking) {
       setReturnToDetails(openBooking);
       setOpenBooking(null);
@@ -417,7 +490,6 @@ export default function OwnerBookingsGlobalPage() {
   const doCancelOwner = async () => {
     if (!session || !pendingCancel) return;
 
-    // ✅ évite double submit
     if (cancelLoadingId) return;
     setCancelLoadingId(pendingCancel.id);
     setErr(null);
@@ -443,16 +515,16 @@ export default function OwnerBookingsGlobalPage() {
               : `Erreur annulation (${res.status})`;
 
         setErr(msg);
-
         setModalOpen(false);
         setPendingCancel(null);
         return;
       }
 
       await load();
+      await loadWallet();
+      await loadMonthly();
 
       setReturnToDetails(null);
-
       setModalOpen(false);
       setPendingCancel(null);
     } catch (e: unknown) {
@@ -476,6 +548,12 @@ export default function OwnerBookingsGlobalPage() {
     [UI.btnBase, active ? UI.btnPrimary : UI.btnGhost, "rounded-full", "px-4 py-2", "w-full sm:w-auto"].join(" ");
 
   const tabTitle = tab === "upcoming" ? "À venir" : tab === "past" ? "Passées" : "Annulées";
+
+  const walletCurrency = wallet?.currency ?? statsFallback.currency;
+  const walletTotal = wallet?.total ?? statsFallback.netEstimate;
+  const walletPending = wallet?.pending ?? 0;
+  const walletAvailable = wallet?.available ?? 0;
+  const walletPaidOut = wallet?.paidOut ?? 0;
 
   if (!ready) {
     return (
@@ -523,7 +601,6 @@ export default function OwnerBookingsGlobalPage() {
           setModalOpen(false);
           setPendingCancel(null);
 
-          // si l’utilisateur fait "Retour", on réouvre Détails
           if (returnToDetails) {
             setOpenBooking(returnToDetails);
             setReturnToDetails(null);
@@ -543,15 +620,23 @@ export default function OwnerBookingsGlobalPage() {
             <Link href="/my-parkings" className={Btn.ghost}>
               Mes places
             </Link>
-            <button className={Btn.ghost} onClick={() => void load()} disabled={loading}>
+            <button
+              className={Btn.ghost}
+              onClick={() => {
+                void load();
+                void loadWallet();
+                void loadMonthly();
+              }}
+              disabled={loading}
+            >
               {loading ? "…" : "Rafraîchir"}
             </button>
           </div>
         </header>
 
-        {/* ✅ Bloc “gains” + onglets */}
+        {/* ===== Option 2: Wallet + Graph + Tabs ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Gains */}
+          {/* Wallet (Option 2) */}
           <div className={`${UI.card} ${UI.cardPad} lg:col-span-2 overflow-hidden relative`}>
             <div
               className={[
@@ -560,32 +645,90 @@ export default function OwnerBookingsGlobalPage() {
               ].join(" ")}
             />
 
-            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm text-slate-600">Gains générés</div>
-                <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">
-                  {moneyPretty(stats.netEstimate, stats.currency)}
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-slate-600">Portefeuille propriétaire</div>
+                  <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">
+                    {moneyPretty(walletTotal, walletCurrency)}
+                  </div>
+                  <div className="text-xs text-slate-600 mt-1">
+                    En attente / Disponible / Payé (payout)
+                    <span className="ml-2 opacity-70">
+                      · net indicatif ≈ {Math.round(OWNER_NET_PERCENT * 100)}% (commission {Math.round(PLATFORM_FEE_PERCENT * 100)}%)
+                    </span>
+                  </div>
                 </div>
-                <div className="text-xs text-slate-600 mt-1">
-                  Estimation net (≈ {Math.round(OWNER_NET_PERCENT * 100)}%) sur les réservations payées
+
+                <div className="flex flex-wrap gap-2">
+                  <span className={UI.chip}>
+                    Ce mois: <b className="ml-1">{moneyPretty(statsFallback.monthGross * OWNER_NET_PERCENT, walletCurrency)}</b>
+                  </span>
+                  <span className={UI.chip}>
+                    Réservations payées: <b className="ml-1">{statsFallback.paidCount}</b>
+                  </span>
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                <span className={UI.chip}>
-                  Total payé: <b className="ml-1">{moneyPretty(stats.gross, stats.currency)}</b>
-                </span>
-                <span className={UI.chip}>
-                  Ce mois: <b className="ml-1">{moneyPretty(stats.monthGross, stats.currency)}</b>
-                </span>
-                <span className={UI.chip}>
-                  Paiements: <b className="ml-1">{stats.paidCount}</b>
-                </span>
+              {walletErr ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3 text-sm text-amber-800">
+                  {walletErr}
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-2xl border border-slate-200/70 bg-white/70 p-3">
+                  <div className="text-xs text-slate-500">En attente</div>
+                  <div className="font-semibold">{moneyPretty(walletPending, walletCurrency)}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/70 bg-white/70 p-3">
+                  <div className="text-xs text-slate-500">Disponible</div>
+                  <div className="font-semibold">{moneyPretty(walletAvailable, walletCurrency)}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/70 bg-white/70 p-3">
+                  <div className="text-xs text-slate-500">Payé</div>
+                  <div className="font-semibold">{moneyPretty(walletPaidOut, walletCurrency)}</div>
+                </div>
+              </div>
+
+              {/* Graphique mensuel */}
+              <div className="pt-1">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium text-slate-800">Gains mensuels (12 mois)</div>
+                  <div className={UI.subtle}>{(monthly?.currency ?? walletCurrency).toUpperCase()}</div>
+                </div>
+
+                {monthlyErr ? (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3 text-sm text-amber-800">
+                    {monthlyErr}
+                  </div>
+                ) : !monthly || monthly.items.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/70 p-3 text-sm text-slate-700">
+                    Pas encore de gains à afficher.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-12 gap-2 items-end h-28">
+                    {(() => {
+                      const max = Math.max(...monthly.items.map((x) => x.total), 1);
+                      return monthly.items.map((x) => {
+                        const h = Math.round((x.total / max) * 100);
+                        return (
+                          <div key={x.month} className="col-span-3 sm:col-span-1 flex flex-col items-center gap-1">
+                            <div className="w-full rounded-xl border border-slate-200/70 bg-white/70 overflow-hidden h-24 flex items-end">
+                              <div className="w-full bg-violet-600/60" style={{ height: `${h}%` }} />
+                            </div>
+                            <div className="text-[10px] text-slate-500">{x.month.slice(5)}</div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Onglets */}
+          {/* Tabs */}
           <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
             <div className="text-sm text-slate-700 font-medium">Filtrer</div>
             <div className="flex flex-col gap-2">
@@ -723,7 +866,6 @@ export default function OwnerBookingsGlobalPage() {
                   const photo = firstPhotoUrl(photos);
 
                   const chatAllowed = canChat(b, nowMs);
-
                   const rb = refundBadge(b);
 
                   return (
@@ -797,7 +939,7 @@ export default function OwnerBookingsGlobalPage() {
           </>
         )}
 
-        {/* MODALE DETAILS (z-40 chez toi) */}
+        {/* MODALE DETAILS */}
         {openBooking ? (
           <div
             className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
@@ -821,7 +963,7 @@ export default function OwnerBookingsGlobalPage() {
                 const photos = parsePhotos(p?.photos ?? null);
                 const photo = firstPhotoUrl(photos);
 
-                const cancelled = isCancelled(openBooking);
+                const cancelledB = isCancelled(openBooking);
                 const pastBooking = isPast(openBooking, nowMs);
                 const chatAllowed = canChat(openBooking, nowMs);
                 const cancelAllowed = canCancelOwner(openBooking, nowMs);
@@ -845,7 +987,7 @@ export default function OwnerBookingsGlobalPage() {
                       </div>
                     </div>
 
-                    {cancelled ? (
+                    {cancelledB ? (
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
                         <div className="font-semibold text-slate-900">Réservation annulée</div>
                         <div className="mt-1 text-xs text-slate-600">
