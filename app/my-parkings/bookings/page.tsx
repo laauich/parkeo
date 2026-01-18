@@ -650,7 +650,7 @@ export default function OwnerBookingsGlobalPage() {
                 <div className="min-w-0">
                   <div className="text-sm text-slate-600">Portefeuille propriétaire</div>
                   <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">
-                    {moneyPretty(walletTotal, walletCurrency)}
+                    <b className="ml-1">{moneyPretty(statsFallback.monthGross * OWNER_NET_PERCENT, walletCurrency)}</b>
                   </div>
                   <div className="text-xs text-slate-600 mt-1">
                     En attente / Disponible / Payé (payout)
@@ -662,13 +662,14 @@ export default function OwnerBookingsGlobalPage() {
 
                 <div className="flex flex-wrap gap-2">
                   <span className={UI.chip}>
-                    Ce mois: <b className="ml-1">{moneyPretty(statsFallback.monthGross * OWNER_NET_PERCENT, walletCurrency)}</b>
+                    Ce mois: {moneyPretty(walletTotal, walletCurrency)}
                   </span>
                   <span className={UI.chip}>
                     Réservations payées: <b className="ml-1">{statsFallback.paidCount}</b>
                   </span>
                 </div>
               </div>
+
 
               {walletErr ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3 text-sm text-amber-800">
