@@ -76,72 +76,13 @@ export default function NavbarClient() {
     setOwnerUnseen(0);
   };
 
-  // ✅ init ownerUnseen depuis localStorage (une seule fois)
+  // ✅ init ownerUnseen depuis localStorage
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // setState dans effect OK ici, mais React dev peut râler si fait "synchro" dans la branche
-    // on le fait via microtask pour éviter warning
     queueMicrotask(() => setOwnerUnseen(readOwnerCountLocal()));
   }, []);
 
-  // ✅ Poll unseen owner bookings (uniquement si connecté)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    // pas connecté => on stoppe le polling, et on remet à zéro via microtask (pas synchro)
-    if (!session?.access_token) {
-      queueMicrotask(() => setOwnerUnseen(0));
-      return;
-    }
-
-    let cancelled = false;
-
-    const check = async () => {
-      try {
-        const since = window.localStorage.getItem(OWNER_SEEN_KEY) || "";
-        const url = since
-          ? `/api/owner/bookings/unseen-count?since=${encodeURIComponent(since)}`
-          : `/api/owner/bookings/unseen-count`;
-
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-
-        const json = (await res.json().catch(() => ({}))) as OwnerUnseenResponse;
-        if (!res.ok || !json || json.ok === false) return;
-
-        const unseen = Number(json.unseen || 0);
-        if (!Number.isFinite(unseen)) return;
-
-        writeOwnerCountLocal(unseen);
-
-        if (!cancelled) {
-          // setState dans callback async => OK
-          setOwnerUnseen(unseen);
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    void check();
-    const t = window.setInterval(check, 25_000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(t);
-    };
-  }, [session?.access_token]);
-
-  // ✅ close helpers
-  const closeAll = () => {
-    setOpen(false);
-    setOwnerOpen(false);
-  };
-
-  const closeOwnerOnly = () => setOwnerOpen(false);
-
-  // ✅ Ferme menus si navigation (sans warning)
+  // ✅ Ferme menus si navigation
   useEffect(() => {
     queueMicrotask(() => {
       setOpen(false);
@@ -149,24 +90,23 @@ export default function NavbarClient() {
     });
   }, [pathname]);
 
-  // ✅ Fix responsive : si on repasse en desktop, on ferme les menus
+  // ✅ Fix responsive desktop
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const mq = window.matchMedia("(min-width: 768px)"); // md
+    const mq = window.matchMedia("(min-width: 768px)");
     const onChange = () => {
       if (mq.matches) {
         setOpen(false);
         setOwnerOpen(false);
       }
     };
-
     onChange();
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  // ✅ Click outside (desktop+mobile)
+  // ✅ click outside
   const ownerWrapDesktopRef = useRef<HTMLDivElement | null>(null);
   const ownerWrapMobileRef = useRef<HTMLDivElement | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
@@ -181,13 +121,9 @@ export default function NavbarClient() {
       if (ownerOpen) {
         const d = ownerWrapDesktopRef.current;
         const m = ownerWrapMobileRef.current;
-
         const insideDesktop = d ? d.contains(target) : false;
         const insideMobile = m ? m.contains(target) : false;
-
-        if (!insideDesktop && !insideMobile) {
-          setOwnerOpen(false);
-        }
+        if (!insideDesktop && !insideMobile) setOwnerOpen(false);
       }
 
       if (open) {
@@ -203,14 +139,10 @@ export default function NavbarClient() {
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [ownerOpen, open]);
 
-  const mobileLinkClass = (href: string) =>
-    [navClass(href), "w-full block text-left"].join(" ");
+  const mobileLinkClass = (href: string) => [navClass(href), "w-full block text-left"].join(" ");
 
-  // Propriétaire: actif si une des pages est active
   const ownerActive =
-    isActive("/my-parkings") ||
-    isActive("/my-parkings/bookings") ||
-    isActive("/owner/payouts");
+    isActive("/my-parkings") || isActive("/my-parkings/bookings") || isActive("/owner/payouts");
 
   const ownerTriggerClass = [
     "w-full md:w-auto",
@@ -228,6 +160,75 @@ export default function NavbarClient() {
         {ownerUnseen > 99 ? "99+" : ownerUnseen}
       </span>
     ) : null;
+
+  // ✅ Poll owner unseen count (anti-cache + visibility refresh)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const token = session?.access_token;
+    if (!token) {
+      queueMicrotask(() => setOwnerUnseen(0));
+      return;
+    }
+
+    let cancelled = false;
+
+    const check = async () => {
+      try {
+        const since = window.localStorage.getItem(OWNER_SEEN_KEY) || "";
+        const ts = Date.now(); // ✅ cache buster
+
+        const url = since
+          ? `/api/owner/bookings/unseen-count?since=${encodeURIComponent(since)}&ts=${ts}`
+          : `/api/owner/bookings/unseen-count?ts=${ts}`;
+
+        const res = await fetch(url, {
+          method: "GET",
+          cache: "no-store", // ✅ IMPORTANT (Next/Vercel cache)
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+        });
+
+        const json = (await res.json().catch(() => ({}))) as OwnerUnseenResponse;
+        if (!res.ok || !json || json.ok === false) return;
+
+        const unseen = Number(json.unseen || 0);
+        if (!Number.isFinite(unseen)) return;
+
+        writeOwnerCountLocal(unseen);
+
+        if (!cancelled) setOwnerUnseen(unseen);
+      } catch {
+        // ignore
+      }
+    };
+
+    // premier check + interval
+    void check();
+    const interval = window.setInterval(check, 20_000);
+
+    // ✅ quand l’utilisateur revient sur l’onglet du navigateur
+    const onVis = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [session?.access_token]);
+
+  const closeAll = () => {
+    setOpen(false);
+    setOwnerOpen(false);
+  };
+
+  const closeOwnerOnly = () => setOwnerOpen(false);
 
   return (
     <header
@@ -273,7 +274,7 @@ export default function NavbarClient() {
               Réservations
             </Link>
 
-            {/* ✅ Groupe Propriétaire (desktop) */}
+            {/* Propriétaire (desktop) */}
             <div className="relative" ref={ownerWrapDesktopRef}>
               <button
                 type="button"
@@ -312,7 +313,7 @@ export default function NavbarClient() {
                       className={[navClass("/my-parkings"), "w-full block"].join(" ")}
                       href="/my-parkings"
                       onClick={() => {
-                        resetOwnerBadge(); // ✅ clear badge on enter owner
+                        resetOwnerBadge(); // ✅ disparaît quand tu cliques
                         closeOwnerOnly();
                         closeAll();
                       }}
@@ -324,7 +325,7 @@ export default function NavbarClient() {
                       className={[navClass("/my-parkings/bookings"), "w-full block"].join(" ")}
                       href="/my-parkings/bookings"
                       onClick={() => {
-                        resetOwnerBadge(); // ✅ clear badge on enter owner
+                        resetOwnerBadge(); // ✅ disparaît quand tu cliques
                         closeOwnerOnly();
                         closeAll();
                       }}
@@ -336,7 +337,7 @@ export default function NavbarClient() {
                       className={[navClass("/owner/payouts"), "w-full block"].join(" ")}
                       href="/owner/payouts"
                       onClick={() => {
-                        resetOwnerBadge(); // ✅ clear badge on enter owner
+                        resetOwnerBadge(); // ✅ disparaît quand tu cliques
                         closeOwnerOnly();
                         closeAll();
                       }}
@@ -368,7 +369,6 @@ export default function NavbarClient() {
                 className={btnGhostPill}
                 onClick={() => {
                   closeAll();
-                  resetOwnerBadge(); // ✅ clean local badge at logout too
                   signOut();
                 }}
               >
@@ -402,10 +402,7 @@ export default function NavbarClient() {
 
       {/* Mobile menu */}
       {open && (
-        <div
-          ref={mobileMenuRef}
-          className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur"
-        >
+        <div ref={mobileMenuRef} className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
           <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
             <Link className={mobileLinkClass("/map")} href="/map" onClick={closeAll}>
               Carte
@@ -423,7 +420,7 @@ export default function NavbarClient() {
               Réservations
             </Link>
 
-            {/* ✅ Accordéon Propriétaire (mobile) */}
+            {/* Propriétaire (mobile) */}
             <div className="pt-1" ref={ownerWrapMobileRef}>
               <button
                 type="button"
@@ -441,21 +438,13 @@ export default function NavbarClient() {
                     {OwnerBadge}
                   </span>
                 </span>
-                <span
-                  className={[
-                    "text-slate-600 transition-transform",
-                    ownerOpen ? "rotate-180" : "rotate-0",
-                  ].join(" ")}
-                >
+                <span className={["text-slate-600 transition-transform", ownerOpen ? "rotate-180" : "rotate-0"].join(" ")}>
                   ▾
                 </span>
               </button>
 
               {ownerOpen ? (
-                <div
-                  id="owner-submenu-mobile"
-                  className="mt-2 ml-2 pl-3 border-l border-slate-200/70 flex flex-col gap-2"
-                >
+                <div id="owner-submenu-mobile" className="mt-2 ml-2 pl-3 border-l border-slate-200/70 flex flex-col gap-2">
                   <Link
                     className={mobileLinkClass("/my-parkings")}
                     href="/my-parkings"
@@ -509,7 +498,6 @@ export default function NavbarClient() {
                     className={btnGhostPill}
                     onClick={() => {
                       closeAll();
-                      resetOwnerBadge();
                       signOut();
                     }}
                   >
