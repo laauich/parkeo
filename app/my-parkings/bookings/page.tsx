@@ -44,6 +44,11 @@ type EnsureChatOk = { ok: true; conversationId: string };
 type EnsureChatErr = { ok: false; error: string; detail?: string };
 type EnsureChatResponse = EnsureChatOk | EnsureChatErr;
 
+type TabKey = "upcoming" | "past" | "cancelled";
+
+const PLATFORM_FEE_PERCENT = 0.15; // ✅ commission Parkeo
+const OWNER_NET_PERCENT = 1 - PLATFORM_FEE_PERCENT;
+
 function getParkingFromJoin(join: BookingRow["parkings"]): ParkingJoin | null {
   if (!join) return null;
   if (Array.isArray(join)) return join[0] ?? null;
@@ -66,6 +71,17 @@ function formatDateTime(iso: string) {
 function money(v: number | null, currency?: string | null) {
   if (v === null || Number.isNaN(v)) return "—";
   return `${v} ${(currency ?? "CHF").toUpperCase()}`;
+}
+
+// ✅ money “joli” pour gros compteur
+function moneyPretty(amount: number, currency?: string | null) {
+  const cur = (currency ?? "CHF").toUpperCase();
+  if (!Number.isFinite(amount)) return `— ${cur}`;
+  const rounded = Math.round(amount * 100) / 100;
+  return `${rounded.toLocaleString("fr-CH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} ${cur}`;
 }
 
 function parsePhotos(raw: ParkingJoin["photos"]): string[] {
@@ -179,6 +195,9 @@ export default function OwnerBookingsGlobalPage() {
   // évite ConfirmModal derrière Détails
   const [returnToDetails, setReturnToDetails] = useState<BookingRow | null>(null);
 
+  // ✅ onglets
+  const [tab, setTab] = useState<TabKey>("upcoming");
+
   const userId = session?.user?.id ?? null;
 
   // ✅ éviter Date.now dans render + même logique partout
@@ -244,12 +263,75 @@ export default function OwnerBookingsGlobalPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, session?.user?.id]);
 
+  // ✅ filtres (3 onglets)
+  const cancelled = useMemo(() => rows.filter((b) => isCancelled(b)), [rows]);
+
   const upcoming = useMemo(() => {
-    return rows.filter((b) => !isPast(b, nowMs));
+    return rows.filter((b) => !isCancelled(b) && !isPast(b, nowMs));
   }, [rows, nowMs]);
 
   const past = useMemo(() => {
-    return rows.filter((b) => isPast(b, nowMs));
+    return rows.filter((b) => !isCancelled(b) && isPast(b, nowMs));
+  }, [rows, nowMs]);
+
+  const visibleRows = useMemo(() => {
+    if (tab === "upcoming") return upcoming;
+    if (tab === "cancelled") return cancelled;
+    return past;
+  }, [tab, upcoming, past, cancelled]);
+
+  // ✅ auto-switch si onglet vide
+  useEffect(() => {
+    if (loading) return;
+    if (rows.length === 0) return;
+
+    const counts = {
+      upcoming: upcoming.length,
+      past: past.length,
+      cancelled: cancelled.length,
+    };
+
+    if (counts[tab] > 0) return;
+
+    if (counts.upcoming > 0) setTab("upcoming");
+    else if (counts.past > 0) setTab("past");
+    else if (counts.cancelled > 0) setTab("cancelled");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, rows.length, upcoming.length, past.length, cancelled.length]);
+
+  // ✅ compteur “gains” owner (simple et motivant)
+  // - On compte uniquement les bookings payées ET non annulées
+  // - ownerGross: somme total_price
+  // - ownerNetEstimate: 85% (si tu prends 15%)
+  // - monthGross: ce mois-ci
+  const stats = useMemo(() => {
+    const paidRows = rows.filter((b) => {
+      const paid = (b.payment_status ?? "").toLowerCase() === "paid";
+      return paid && !isCancelled(b) && (b.total_price ?? 0) > 0;
+    });
+
+    const currency = (paidRows.find((b) => b.currency)?.currency ?? "CHF").toUpperCase();
+
+    const gross = paidRows.reduce((acc, b) => acc + (b.total_price ?? 0), 0);
+    const netEstimate = gross * OWNER_NET_PERCENT;
+
+    const now = new Date(nowMs);
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+    const monthGross = paidRows.reduce((acc, b) => {
+      const d = new Date(b.start_time);
+      if (Number.isNaN(d.getTime())) return acc;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      return key === ym ? acc + (b.total_price ?? 0) : acc;
+    }, 0);
+
+    return {
+      currency,
+      paidCount: paidRows.length,
+      gross,
+      netEstimate,
+      monthGross,
+    };
   }, [rows, nowMs]);
 
   const openChat = async (bookingId: string) => {
@@ -279,7 +361,6 @@ export default function OwnerBookingsGlobalPage() {
       const json = (await res.json().catch(() => ({}))) as EnsureChatResponse;
 
       if (!res.ok || !("ok" in json) || json.ok === false) {
-        // ✅ affiche detail si présent
         const msg =
           ("detail" in json && json.detail)
             ? `${json.error ?? "Erreur chat"} — ${json.detail}`
@@ -363,7 +444,6 @@ export default function OwnerBookingsGlobalPage() {
 
         setErr(msg);
 
-        // on ferme le ConfirmModal mais on peut retourner au détail si l’utilisateur veut
         setModalOpen(false);
         setPendingCancel(null);
         return;
@@ -371,7 +451,6 @@ export default function OwnerBookingsGlobalPage() {
 
       await load();
 
-      // après annulation confirmée : on ne rouvre pas détails automatiquement
       setReturnToDetails(null);
 
       setModalOpen(false);
@@ -392,6 +471,11 @@ export default function OwnerBookingsGlobalPage() {
   };
 
   const Card = `${UI.card} ${UI.cardPad}`;
+
+  const tabBtnClass = (active: boolean) =>
+    [UI.btnBase, active ? UI.btnPrimary : UI.btnGhost, "rounded-full", "px-4 py-2", "w-full sm:w-auto"].join(" ");
+
+  const tabTitle = tab === "upcoming" ? "À venir" : tab === "past" ? "Passées" : "Annulées";
 
   if (!ready) {
     return (
@@ -465,6 +549,64 @@ export default function OwnerBookingsGlobalPage() {
           </div>
         </header>
 
+        {/* ✅ Bloc “gains” + onglets */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Gains */}
+          <div className={`${UI.card} ${UI.cardPad} lg:col-span-2 overflow-hidden relative`}>
+            <div
+              className={[
+                "absolute inset-0 -z-10 opacity-60",
+                "bg-gradient-to-r from-violet-200/60 via-white/30 to-violet-200/60",
+              ].join(" ")}
+            />
+
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm text-slate-600">Gains générés</div>
+                <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">
+                  {moneyPretty(stats.netEstimate, stats.currency)}
+                </div>
+                <div className="text-xs text-slate-600 mt-1">
+                  Estimation net (≈ {Math.round(OWNER_NET_PERCENT * 100)}%) sur les réservations payées
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <span className={UI.chip}>
+                  Total payé: <b className="ml-1">{moneyPretty(stats.gross, stats.currency)}</b>
+                </span>
+                <span className={UI.chip}>
+                  Ce mois: <b className="ml-1">{moneyPretty(stats.monthGross, stats.currency)}</b>
+                </span>
+                <span className={UI.chip}>
+                  Paiements: <b className="ml-1">{stats.paidCount}</b>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Onglets */}
+          <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
+            <div className="text-sm text-slate-700 font-medium">Filtrer</div>
+            <div className="flex flex-col gap-2">
+              <button type="button" className={tabBtnClass(tab === "upcoming")} onClick={() => setTab("upcoming")}>
+                À venir <span className="opacity-70">({upcoming.length})</span>
+              </button>
+              <button type="button" className={tabBtnClass(tab === "past")} onClick={() => setTab("past")}>
+                Passées <span className="opacity-70">({past.length})</span>
+              </button>
+              <button type="button" className={tabBtnClass(tab === "cancelled")} onClick={() => setTab("cancelled")}>
+                Annulées <span className="opacity-70">({cancelled.length})</span>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-sm text-slate-700 font-medium">{tabTitle}</span>
+              <span className={UI.subtle}>{visibleRows.length} réservation(s)</span>
+            </div>
+          </div>
+        </div>
+
         {err ? (
           <div className={`${Card} border-rose-200`}>
             <p className="text-sm text-rose-700">Erreur : {err}</p>
@@ -480,175 +622,70 @@ export default function OwnerBookingsGlobalPage() {
             <p className={UI.p}>Aucune réservation pour le moment.</p>
           </div>
         ) : (
-          <div className="space-y-8">
-            {/* À venir */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className={UI.h2}>À venir</h2>
-                <span className={UI.subtle}>{upcoming.length} réservation(s)</span>
-              </div>
+          <>
+            {/* ✅ 1 seule liste affichée selon l’onglet */}
+            {tab === "upcoming" ? (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {visibleRows.map((b) => {
+                  const p = getParkingFromJoin(b.parkings);
+                  const photos = parsePhotos(p?.photos ?? null);
+                  const photo = firstPhotoUrl(photos);
 
-              {upcoming.length === 0 ? (
-                <div className={Card}>
-                  <p className={UI.p}>Aucune réservation à venir.</p>
-                </div>
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {upcoming.map((b) => {
-                    const p = getParkingFromJoin(b.parkings);
-                    const photos = parsePhotos(p?.photos ?? null);
-                    const photo = firstPhotoUrl(photos);
+                  const chatAllowed = canChat(b, nowMs);
+                  const cancelAllowed = canCancelOwner(b, nowMs);
 
-                    const chatAllowed = canChat(b, nowMs);
-                    const cancelAllowed = canCancelOwner(b, nowMs);
-
-                    return (
-                      <div key={b.id} className={`${UI.card} ${UI.cardHover} overflow-hidden`}>
-                        <div className="h-40 bg-slate-100">
-                          {photo ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={photo} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
-                              Aucune photo
-                            </div>
-                          )}
-                        </div>
-
-                        <div className={UI.cardPad}>
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="font-semibold text-slate-900 truncate">{p?.title ?? "Place"}</div>
-                              <div className="mt-1 text-xs text-slate-600 line-clamp-2">
-                                {p?.address ?? "Adresse non renseignée"}
-                              </div>
-                            </div>
-
-                            <div className="flex flex-col gap-1 items-end text-[11px]">
-                              <span className={UI.chip}>{b.status ?? "—"}</span>
-                              <span className={UI.chip}>{b.payment_status ?? "—"}</span>
-                            </div>
+                  return (
+                    <div key={b.id} className={`${UI.card} ${UI.cardHover} overflow-hidden`}>
+                      <div className="h-40 bg-slate-100">
+                        {photo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={photo} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                            Aucune photo
                           </div>
-
-                          <div className="mt-3 space-y-1 text-sm text-slate-700">
-                            <div>
-                              <span className="text-slate-500">Début :</span> <b>{formatDateTime(b.start_time)}</b>
-                            </div>
-                            <div>
-                              <span className="text-slate-500">Fin :</span> <b>{formatDateTime(b.end_time)}</b>
-                            </div>
-                          </div>
-
-                          <div className="mt-3 flex items-center justify-between text-sm">
-                            <span className="text-slate-500">Total</span>
-                            <b className="text-slate-900">{money(b.total_price, b.currency)}</b>
-                          </div>
-
-                          <div className={`${UI.divider} my-4`} />
-
-                          {/* 3 boutons comme côté client */}
-                          <div className="flex gap-2">
-                            <Link href={`/parkings/${b.parking_id}`} className={`${UI.btnBase} ${UI.btnGhost} flex-1`}>
-                              Voir la place
-                            </Link>
-
-                            <button
-                              type="button"
-                              className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
-                              disabled={!chatAllowed || chatLoadingId === b.id}
-                              onClick={() => void openChat(b.id)}
-                              title={!chatAllowed ? "Chat désactivé (passée ou annulée)" : ""}
-                            >
-                              {chatLoadingId === b.id ? "…" : "Chat"}
-                            </button>
-
-                            <button
-                              type="button"
-                              className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
-                              onClick={() => {
-                                setErr(null);
-                                setOpenBooking(b);
-                              }}
-                            >
-                              Détails
-                            </button>
-                          </div>
-
-                          {/* info discrète si annulation désactivée */}
-                          {!cancelAllowed ? (
-                            <div className="mt-3 text-xs text-slate-500">
-                              Annulation désactivée (réservation passée ou annulée).
-                            </div>
-                          ) : null}
-                        </div>
+                        )}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
 
-            {/* Passées */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className={UI.h2}>Passées</h2>
-                <span className={UI.subtle}>{past.length} réservation(s)</span>
-              </div>
-
-              {past.length === 0 ? (
-                <div className={Card}>
-                  <p className={UI.p}>Aucune réservation passée.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {past.map((b) => {
-                    const p = getParkingFromJoin(b.parkings);
-                    const photos = parsePhotos(p?.photos ?? null);
-                    const photo = firstPhotoUrl(photos);
-                    const chatAllowed = canChat(b, nowMs);
-
-                    return (
-                      <div
-                        key={b.id}
-                        className="rounded-2xl border border-slate-200/70 bg-white/70 backdrop-blur p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-16 h-12 rounded-xl bg-slate-100 overflow-hidden shrink-0">
-                            {photo ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={photo} alt="" className="w-full h-full object-cover" />
-                            ) : null}
-                          </div>
-
+                      <div className={UI.cardPad}>
+                        <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="font-semibold text-slate-900 truncate">{p?.title ?? "Place"}</div>
                             <div className="mt-1 text-xs text-slate-600 line-clamp-2">
                               {p?.address ?? "Adresse non renseignée"}
                             </div>
-                            <div className="mt-2 text-sm text-slate-700">
-                              <span className="text-slate-500">Fin :</span> <b>{formatDateTime(b.end_time)}</b>
-                            </div>
+                          </div>
 
-                            {isCancelled(b) ? (
-                              <div className="mt-2 text-xs text-slate-600">
-                                <b className="text-slate-900">Annulée</b>
-                                {refundBadge(b) ? (
-                                  <span className="ml-2 text-slate-600">· {refundBadge(b)!.label}</span>
-                                ) : null}
-                              </div>
-                            ) : null}
+                          <div className="flex flex-col gap-1 items-end text-[11px]">
+                            <span className={UI.chip}>{b.status ?? "—"}</span>
+                            <span className={UI.chip}>{b.payment_status ?? "—"}</span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 justify-between sm:justify-end">
-                          <div className="text-sm text-slate-700">
-                            <div className="text-slate-500 text-xs">Total</div>
-                            <div className="font-semibold">{money(b.total_price, b.currency)}</div>
+                        <div className="mt-3 space-y-1 text-sm text-slate-700">
+                          <div>
+                            <span className="text-slate-500">Début :</span> <b>{formatDateTime(b.start_time)}</b>
                           </div>
+                          <div>
+                            <span className="text-slate-500">Fin :</span> <b>{formatDateTime(b.end_time)}</b>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between text-sm">
+                          <span className="text-slate-500">Total</span>
+                          <b className="text-slate-900">{money(b.total_price, b.currency)}</b>
+                        </div>
+
+                        <div className={`${UI.divider} my-4`} />
+
+                        <div className="flex gap-2">
+                          <Link href={`/parkings/${b.parking_id}`} className={`${UI.btnBase} ${UI.btnGhost} flex-1`}>
+                            Voir la place
+                          </Link>
 
                           <button
                             type="button"
-                            className={`${UI.btnBase} ${UI.btnPrimary}`}
+                            className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
                             disabled={!chatAllowed || chatLoadingId === b.id}
                             onClick={() => void openChat(b.id)}
                             title={!chatAllowed ? "Chat désactivé (passée ou annulée)" : ""}
@@ -658,23 +695,106 @@ export default function OwnerBookingsGlobalPage() {
 
                           <button
                             type="button"
-                            className={`${UI.btnBase} ${UI.btnGhost}`}
-                            onClick={() => setOpenBooking(b)}
+                            className={`${UI.btnBase} ${UI.btnPrimary} flex-1`}
+                            onClick={() => {
+                              setErr(null);
+                              setOpenBooking(b);
+                            }}
                           >
                             Détails
                           </button>
+                        </div>
 
-                          <Link href={`/parkings/${b.parking_id}`} className={`${UI.btnBase} ${UI.btnPrimary}`}>
-                            Voir la place
-                          </Link>
+                        {!cancelAllowed ? (
+                          <div className="mt-3 text-xs text-slate-500">
+                            Annulation désactivée (réservation passée ou annulée).
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {visibleRows.map((b) => {
+                  const p = getParkingFromJoin(b.parkings);
+                  const photos = parsePhotos(p?.photos ?? null);
+                  const photo = firstPhotoUrl(photos);
+
+                  const chatAllowed = canChat(b, nowMs);
+
+                  const rb = refundBadge(b);
+
+                  return (
+                    <div
+                      key={b.id}
+                      className="rounded-2xl border border-slate-200/70 bg-white/70 backdrop-blur p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-16 h-12 rounded-xl bg-slate-100 overflow-hidden shrink-0">
+                          {photo ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={photo} alt="" className="w-full h-full object-cover" />
+                          ) : null}
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900 truncate">{p?.title ?? "Place"}</div>
+                          <div className="mt-1 text-xs text-slate-600 line-clamp-2">
+                            {p?.address ?? "Adresse non renseignée"}
+                          </div>
+
+                          <div className="mt-2 text-sm text-slate-700">
+                            <span className="text-slate-500">{tab === "cancelled" ? "Début :" : "Fin :"}</span>{" "}
+                            <b>{tab === "cancelled" ? formatDateTime(b.start_time) : formatDateTime(b.end_time)}</b>
+                          </div>
+
+                          {isCancelled(b) ? (
+                            <div className="mt-2 text-xs text-slate-600">
+                              <b className="text-slate-900">Annulée</b>
+                              {rb ? <span className="ml-2">· {rb.label}</span> : null}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          </div>
+
+                      <div className="flex items-center gap-2 justify-between sm:justify-end">
+                        <div className="text-sm text-slate-700">
+                          <div className="text-slate-500 text-xs">Total</div>
+                          <div className="font-semibold">{money(b.total_price, b.currency)}</div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className={`${UI.btnBase} ${UI.btnPrimary}`}
+                          disabled={!chatAllowed || chatLoadingId === b.id}
+                          onClick={() => void openChat(b.id)}
+                          title={!chatAllowed ? "Chat désactivé (passée ou annulée)" : ""}
+                        >
+                          {chatLoadingId === b.id ? "…" : "Chat"}
+                        </button>
+
+                        <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => setOpenBooking(b)}>
+                          Détails
+                        </button>
+
+                        <Link href={`/parkings/${b.parking_id}`} className={`${UI.btnBase} ${UI.btnPrimary}`}>
+                          Voir la place
+                        </Link>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {visibleRows.length === 0 ? (
+                  <div className={Card}>
+                    <p className={UI.p}>Aucune réservation dans cet onglet.</p>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </>
         )}
 
         {/* MODALE DETAILS (z-40 chez toi) */}
