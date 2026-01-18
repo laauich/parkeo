@@ -214,7 +214,7 @@ export default function MyParkingsPage() {
               <span className={UI.chip}>
                 {rows.length} place(s) · {activeCount} active(s)
               </span>
-              <span className={UI.chip}>Style: violet premium</span>
+              
             </div>
           </div>
 

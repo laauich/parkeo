@@ -528,7 +528,7 @@ export default function MapClient() {
         <header className="hidden lg:flex items-start justify-between gap-4">
           <div className="space-y-1">
             <h1 className={UI.h2}>Carte des parkings</h1>
-            <p className={UI.p}>Recherche d’adresse + GPS + popup</p>
+          
             {geoStatus ? <p className={UI.subtle}>{geoStatus}</p> : null}
           </div>
 

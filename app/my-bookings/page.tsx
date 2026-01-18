@@ -416,7 +416,7 @@ export default function MyBookingsPage() {
         <div className={UI.sectionTitleRow}>
           <div className="min-w-0">
             <h1 className={UI.h1}>Mes réservations</h1>
-            <p className={UI.p}>Filtre rapide : une seule liste à la fois (super sur mobile).</p>
+        
           </div>
 
           <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
