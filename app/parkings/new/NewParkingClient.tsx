@@ -9,6 +9,7 @@ import { UI } from "@/app/components/ui";
 import PhotoUploader from "@/app/components/PhotoUploader";
 import MapPicker from "@/app/components/MapPicker";
 import AddressSearch from "@/app/components/AddressSearch";
+import ParkingAvailabilityPlanner from "@/app/components/ParkingAvailabilityPlanner";
 
 type ParkingType = "outdoor" | "indoor" | "garage";
 
@@ -49,9 +50,13 @@ function guessPartsFromDisplayName(displayName: string) {
   return { street, streetNumber, postalCode, city };
 }
 
+type Step = "form" | "availability";
+
 export default function NewParkingClient() {
   const router = useRouter();
   const { ready, session, supabase } = useAuth();
+
+  const [step, setStep] = useState<Step>("form");
 
   const [title, setTitle] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -82,6 +87,9 @@ export default function NewParkingClient() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ✅ id final une fois la place créée
+  const [createdId, setCreatedId] = useState<string | null>(null);
+
   useEffect(() => {
     if (!city) setCity("Genève");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -96,6 +104,29 @@ export default function NewParkingClient() {
       city: city.trim(),
     });
   }, [street, streetNumber, postalCode, city]);
+
+  const resetAll = () => {
+    setStep("form");
+    setCreatedId(null);
+    setTitle("");
+    setInstructions("");
+    setStreet("");
+    setStreetNumber("");
+    setPostalCode("");
+    setCity("Genève");
+    setParkingType("outdoor");
+    setIsCovered(false);
+    setHasEvCharger(false);
+    setIsSecure(false);
+    setIsLit(false);
+    setPriceHour("");
+    setPriceDay("");
+    setPhotos([]);
+    setPos(null);
+    setAddressSearch("");
+    setError(null);
+    setSaving(false);
+  };
 
   const onCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -181,8 +212,15 @@ export default function NewParkingClient() {
       return;
     }
 
-    router.push(`/my-parkings`);
-    router.refresh();
+    // ✅ on passe à l'étape planning
+    setCreatedId(created.id);
+    setStep("availability");
+    setError(null);
+
+    // petit scroll smooth vers le haut
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   };
 
   // ===== UI states =====
@@ -221,6 +259,72 @@ export default function NewParkingClient() {
               <Link href="/parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>
                 Voir les places
               </Link>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // ===== Step 2: Availability after creation =====
+  if (step === "availability" && createdId) {
+    return (
+      <main className={UI.page}>
+        <div className={`${UI.container} ${UI.section} space-y-6`}>
+          <header className={UI.sectionTitleRow}>
+            <div className="space-y-1">
+              <h1 className={UI.h1}>Planning (optionnel)</h1>
+              <p className={UI.p}>
+                Ta place est créée ✅
+                <span className="block">
+                  Définis maintenant quand elle est disponible. Si tu ne mets rien, elle reste louable (fallback).
+                </span>
+              </p>
+
+              <div className="flex flex-wrap gap-2 pt-2">
+                <span className={UI.chip}>
+                  ID : <span className="font-mono">{createdId}</span>
+                </span>
+                <span className={UI.chipSuccess}>Étape 2/2</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Link href={`/my-parkings/${createdId}/edit`} className={`${UI.btnBase} ${UI.btnGhost}`}>
+                Modifier la place
+              </Link>
+
+              <Link href="/my-parkings" className={`${UI.btnBase} ${UI.btnPrimary}`}>
+                Terminer
+              </Link>
+            </div>
+          </header>
+
+          <section className={`${UI.card} ${UI.cardPad}`}>
+            <ParkingAvailabilityPlanner parkingId={createdId} />
+          </section>
+
+          <div className={`${UI.card} ${UI.cardPad} flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3`}>
+            <div className="text-sm text-slate-700">
+              Tu peux aussi configurer ça plus tard dans <b>Mes places</b> → <b>Planning</b>.
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Link href="/my-parkings" className={`${UI.btnBase} ${UI.btnPrimary}`}>
+                Aller sur Mes places
+              </Link>
+
+              <button
+                type="button"
+                className={`${UI.btnBase} ${UI.btnGhost}`}
+                onClick={() => {
+                  // repartir sur une nouvelle création si besoin
+                  resetAll();
+                  router.refresh();
+                }}
+              >
+                Créer une autre place
+              </button>
             </div>
           </div>
         </div>
@@ -368,7 +472,7 @@ export default function NewParkingClient() {
                   📍 {pos.lat.toFixed(5)}, {pos.lng.toFixed(5)}
                 </span>
               ) : (
-                <span className={UI.chip}>📍 Position : —</span>
+                <span className={UI.chip}>📍Position : —</span>
               )}
             </div>
           </section>
@@ -449,9 +553,7 @@ export default function NewParkingClient() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">
-                  Prix / heure (CHF)
-                </label>
+                <label className="text-sm font-medium text-slate-900">Prix / heure (CHF)</label>
                 <input
                   className={UI.input}
                   value={priceHour}
@@ -462,9 +564,7 @@ export default function NewParkingClient() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">
-                  Prix / jour (CHF)
-                </label>
+                <label className="text-sm font-medium text-slate-900">Prix / jour (CHF)</label>
                 <input
                   className={UI.input}
                   value={priceDay}
@@ -489,24 +589,15 @@ export default function NewParkingClient() {
                 <span className={UI.chip}>Étape 5/5</span>
               </div>
 
-              <PhotoUploader
-                parkingId={tempId}
-                value={photos}
-                onChange={setPhotos}
-                maxPhotos={3}
-              />
+              <PhotoUploader parkingId={tempId} value={photos} onChange={setPhotos} maxPhotos={3} />
 
-              <p className={UI.subtle}>
-                Conseil : 1 à 3 photos nettes (entrée, place, accès).
-              </p>
+              <p className={UI.subtle}>Conseil : 1 à 3 photos nettes (entrée, place, accès).</p>
             </div>
 
             <div className={`${UI.card} ${UI.cardPad} space-y-3`}>
               <div>
                 <h2 className={UI.h2}>Carte</h2>
-                <p className={UI.p}>
-                  Sélectionne l’emplacement (auto si tu choisis une adresse).
-                </p>
+                <p className={UI.p}>Sélectionne l’emplacement (auto si tu choisis une adresse).</p>
               </div>
 
               <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white/60 backdrop-blur">
@@ -532,10 +623,7 @@ export default function NewParkingClient() {
               {saving ? "Création…" : "Créer la place"}
             </button>
 
-            <Link
-              className={`${UI.btnBase} ${UI.btnGhost} w-full sm:w-auto`}
-              href="/my-parkings"
-            >
+            <Link className={`${UI.btnBase} ${UI.btnGhost} w-full sm:w-auto`} href="/my-parkings">
               Mes places
             </Link>
 
@@ -546,6 +634,14 @@ export default function NewParkingClient() {
             >
               Retour
             </button>
+          </div>
+
+          {/* ✅ note planning */}
+          <div className={`${UI.card} ${UI.cardPad} border-slate-200/70 bg-white/60`}>
+            <div className="text-sm text-slate-900 font-semibold">⏱ Planning de disponibilité</div>
+            <p className={UI.p}>
+              Après la création, tu pourras définir les horaires de disponibilité (optionnel).
+            </p>
           </div>
         </form>
       </div>
