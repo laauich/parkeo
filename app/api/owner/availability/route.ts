@@ -5,54 +5,50 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function env(name: string) {
+function env(name: string): string {
   const v = process.env[name];
   if (!v || !v.trim()) throw new Error(`ENV manquante: ${name}`);
   return v;
 }
 
-function getBearerToken(req: Request) {
+function getBearerToken(req: Request): string | null {
   const auth = req.headers.get("authorization") || "";
   if (!auth.startsWith("Bearer ")) return null;
   return auth.slice(7);
 }
 
-type SlotIn = {
-  weekday: number; // 1..7
-  start_time: string; // "HH:mm" or "HH:mm:ss"
-  end_time: string; // "HH:mm" or "HH:mm:ss"
+type DayKey = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+type Slot = {
+  weekday: DayKey;
   enabled: boolean;
+  start_time: string; // "HH:MM" ou "HH:MM:SS"
+  end_time: string;
 };
 
-function isTimeLike(s: unknown) {
-  if (typeof s !== "string") return false;
-  // accepte HH:mm ou HH:mm:ss
-  return /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(s.trim());
+type GetOk = { ok: true; slots: Slot[] };
+type GetErr = { ok: false; error: string; detail?: string };
+
+type PostBody = {
+  parkingId?: string;
+  slots?: Slot[];
+};
+
+function isDayKey(n: number): n is DayKey {
+  return n >= 1 && n <= 7;
 }
 
-function timeToMinutes(t: string) {
-  const [hh, mm] = t.split(":");
-  const h = Number(hh);
-  const m = Number(mm);
-  return h * 60 + m;
-}
-
-function normalizeTime(t: string) {
+function clampTime(t: string): string {
   const s = t.trim();
-  // transforme HH:mm => HH:mm:00
-  if (/^\d\d:\d\d$/.test(s)) return `${s}:00`;
-  return s;
+  if (!s) return "00:00";
+  const parts = s.split(":");
+  const hh = Number(parts[0] ?? "0");
+  const mm = Number(parts[1] ?? "0");
+  const H = Number.isFinite(hh) ? Math.min(23, Math.max(0, hh)) : 0;
+  const M = Number.isFinite(mm) ? Math.min(59, Math.max(0, mm)) : 0;
+  return `${String(H).padStart(2, "0")}:${String(M).padStart(2, "0")}`;
 }
 
-function jsonErr(error: string, status = 400, detail?: string) {
-  return NextResponse.json({ ok: false, error, ...(detail ? { detail } : {}) }, { status });
-}
-
-function jsonOk(payload: any, status = 200) {
-  return NextResponse.json(payload, { status });
-}
-
-// GET /api/owner/availability?parkingId=<uuid>
 export async function GET(req: Request) {
   try {
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
@@ -60,51 +56,69 @@ export async function GET(req: Request) {
     const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
     const token = getBearerToken(req);
-    if (!token) return jsonErr("Unauthorized", 401, "Missing Authorization: Bearer <token>");
+    if (!token) return NextResponse.json({ ok: false, error: "Unauthorized" } satisfies GetErr, { status: 401 });
 
     const url = new URL(req.url);
-    const parkingId = (url.searchParams.get("parkingId") || "").trim();
-    if (!parkingId) return jsonErr("parkingId manquant", 400);
+    const parkingId = (url.searchParams.get("parkingId") ?? "").trim();
+    if (!parkingId) return NextResponse.json({ ok: false, error: "parkingId manquant" } satisfies GetErr, { status: 400 });
 
-    // user via token
+    // user
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
     });
 
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-    if (uErr || !u.user) return jsonErr("Unauthorized", 401, uErr?.message ?? "No user");
+    if (uErr || !u.user) return NextResponse.json({ ok: false, error: "Unauthorized" } satisfies GetErr, { status: 401 });
 
-    // admin (service role)
+    const userId = u.user.id;
+
+    // admin
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-    // owner check
     const { data: p, error: pErr } = await admin
       .from("parkings")
       .select("id,owner_id")
       .eq("id", parkingId)
       .maybeSingle();
 
-    if (pErr) return jsonErr("DB error", 500, pErr.message);
-    if (!p) return jsonErr("Parking introuvable", 404);
-    if (p.owner_id !== u.user.id) return jsonErr("Forbidden", 403);
+    if (pErr) return NextResponse.json({ ok: false, error: pErr.message } satisfies GetErr, { status: 500 });
+    if (!p) return NextResponse.json({ ok: false, error: "Parking introuvable" } satisfies GetErr, { status: 404 });
+    if ((p as { owner_id: string }).owner_id !== userId)
+      return NextResponse.json({ ok: false, error: "Forbidden" } satisfies GetErr, { status: 403 });
 
-    const { data: rows, error: aErr } = await admin
+    const { data: rows, error } = await admin
       .from("parking_availability")
       .select("weekday,start_time,end_time,enabled")
       .eq("parking_id", parkingId)
-      .order("weekday", { ascending: true })
-      .order("start_time", { ascending: true });
+      .order("weekday", { ascending: true });
 
-    if (aErr) return jsonErr("DB error", 500, aErr.message);
+    if (error) return NextResponse.json({ ok: false, error: error.message } satisfies GetErr, { status: 500 });
 
-    return jsonOk({ ok: true, parkingId, slots: rows ?? [] }, 200);
+    const slots: Slot[] = (rows ?? [])
+      .map((r) => {
+        const wd = Number((r as { weekday: number }).weekday);
+        if (!Number.isFinite(wd) || !isDayKey(wd)) return null;
+
+        return {
+          weekday: wd,
+          enabled: Boolean((r as { enabled: boolean }).enabled),
+          start_time: String((r as { start_time: string }).start_time ?? "08:00"),
+          end_time: String((r as { end_time: string }).end_time ?? "20:00"),
+        } satisfies Slot;
+      })
+      .filter((x): x is Slot => x !== null)
+      .map((s) => ({ ...s, start_time: clampTime(s.start_time), end_time: clampTime(s.end_time) }));
+
+    return NextResponse.json({ ok: true, slots } satisfies GetOk, { status: 200 });
   } catch (e: unknown) {
-    return jsonErr("Server error", 500, e instanceof Error ? e.message : "Unknown error");
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : "Server error" } satisfies GetErr,
+      { status: 500 }
+    );
   }
 }
 
-// POST /api/owner/availability  body: { parkingId, slots: SlotIn[] }
 export async function POST(req: Request) {
   try {
     const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
@@ -112,70 +126,77 @@ export async function POST(req: Request) {
     const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
 
     const token = getBearerToken(req);
-    if (!token) return jsonErr("Unauthorized", 401, "Missing Authorization: Bearer <token>");
+    if (!token) return NextResponse.json({ ok: false, error: "Unauthorized" } as const, { status: 401 });
 
-    const body = (await req.json().catch(() => ({}))) as { parkingId?: string; slots?: SlotIn[] };
+    const body = (await req.json().catch(() => ({}))) as PostBody;
+
     const parkingId = (body.parkingId ?? "").trim();
-    const slots = Array.isArray(body.slots) ? body.slots : [];
+    const slotsIn = Array.isArray(body.slots) ? body.slots : [];
 
-    if (!parkingId) return jsonErr("parkingId manquant", 400);
+    if (!parkingId) return NextResponse.json({ ok: false, error: "parkingId manquant" } as const, { status: 400 });
 
-    // user via token
+    // user
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
     });
 
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-    if (uErr || !u.user) return jsonErr("Unauthorized", 401, uErr?.message ?? "No user");
+    if (uErr || !u.user) return NextResponse.json({ ok: false, error: "Unauthorized" } as const, { status: 401 });
 
-    // admin (service role)
+    const userId = u.user.id;
+
+    // admin
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-    // owner check
     const { data: p, error: pErr } = await admin
       .from("parkings")
       .select("id,owner_id")
       .eq("id", parkingId)
       .maybeSingle();
 
-    if (pErr) return jsonErr("DB error", 500, pErr.message);
-    if (!p) return jsonErr("Parking introuvable", 404);
-    if (p.owner_id !== u.user.id) return jsonErr("Forbidden", 403);
+    if (pErr) return NextResponse.json({ ok: false, error: pErr.message } as const, { status: 500 });
+    if (!p) return NextResponse.json({ ok: false, error: "Parking introuvable" } as const, { status: 404 });
+    if ((p as { owner_id: string }).owner_id !== userId)
+      return NextResponse.json({ ok: false, error: "Forbidden" } as const, { status: 403 });
 
-    // validate slots
-    for (const s of slots) {
-      if (typeof s.weekday !== "number" || s.weekday < 1 || s.weekday > 7) {
-        return jsonErr("weekday invalide (1..7)", 400);
-      }
-      if (!isTimeLike(s.start_time) || !isTimeLike(s.end_time)) {
-        return jsonErr("Heures invalides (format HH:mm ou HH:mm:ss)", 400);
-      }
-      const a = timeToMinutes(s.start_time);
-      const b = timeToMinutes(s.end_time);
-      if (!(b > a)) return jsonErr("end_time doit être après start_time", 400);
-      if (typeof s.enabled !== "boolean") return jsonErr("enabled invalide", 400);
-    }
+    // Normalise + sécurité weekday
+    const normalized: Slot[] = slotsIn
+      .map((s) => {
+        const wd = Number((s as { weekday: number }).weekday);
+        if (!Number.isFinite(wd) || !isDayKey(wd)) return null;
 
-    // Replace strategy: delete then insert (simple, robuste)
+        return {
+          weekday: wd,
+          enabled: Boolean((s as { enabled: boolean }).enabled),
+          start_time: clampTime(String((s as { start_time?: string }).start_time ?? "08:00")),
+          end_time: clampTime(String((s as { end_time?: string }).end_time ?? "20:00")),
+        } satisfies Slot;
+      })
+      .filter((x): x is Slot => x !== null);
+
+    // delete then upsert
     const { error: delErr } = await admin.from("parking_availability").delete().eq("parking_id", parkingId);
-    if (delErr) return jsonErr("DB error", 500, delErr.message);
+    if (delErr) return NextResponse.json({ ok: false, error: delErr.message } as const, { status: 500 });
 
-    if (slots.length > 0) {
-      const payload = slots.map((s) => ({
+    if (normalized.length > 0) {
+      const rows = normalized.map((s) => ({
         parking_id: parkingId,
         weekday: s.weekday,
-        start_time: normalizeTime(s.start_time),
-        end_time: normalizeTime(s.end_time),
+        start_time: s.start_time,
+        end_time: s.end_time,
         enabled: s.enabled,
       }));
 
-      const { error: insErr } = await admin.from("parking_availability").insert(payload);
-      if (insErr) return jsonErr("DB error", 500, insErr.message);
+      const { error: insErr } = await admin.from("parking_availability").insert(rows);
+      if (insErr) return NextResponse.json({ ok: false, error: insErr.message } as const, { status: 500 });
     }
 
-    return jsonOk({ ok: true, parkingId, saved: true, count: slots.length }, 200);
+    return NextResponse.json({ ok: true } as const, { status: 200 });
   } catch (e: unknown) {
-    return jsonErr("Server error", 500, e instanceof Error ? e.message : "Unknown error");
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : "Server error" } as const,
+      { status: 500 }
+    );
   }
 }
