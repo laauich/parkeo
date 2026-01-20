@@ -137,11 +137,16 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
       setErr(null);
       setOkMsg(null);
       return;
-    }
-
+     }
     setLoading(true);
     setErr(null);
     setOkMsg(null);
+
+if (!parkingId || !isUuid(parkingId)) {
+  setErr("parkingId invalide (place non chargée)");
+  setLoading(false); // dans load()
+  return;
+}
 
     try {
       const url = `/api/owner/availability/get?parkingId=${encodeURIComponent(parkingIdSafe)}`;
@@ -183,6 +188,11 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
     }
 
     setSaving(true);
+if (!parkingId || !isUuid(parkingId)) {
+  setErr("parkingId invalide (place non chargée)");
+  setSaving(false);
+  return;
+}
 
     try {
       const res = await fetch("/api/owner/availability/upsert", {
@@ -208,13 +218,12 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
   };
 
   useEffect(() => {
-    if (!ready || !session || !authHeader) return;
-    // ✅ on ne load QUE si parkingId est un UUID valide
-    if (!parkingReady) return;
+  if (!ready || !session || !authHeader) return;
+  if (!parkingId || !isUuid(parkingId)) return; // ✅ stop net
+  queueMicrotask(() => void load());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [ready, session?.user?.id, parkingId]);
 
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, session?.user?.id, parkingIdSafe, parkingReady]);
 
   const enabledCount = useMemo(() => slots.filter((s) => s.enabled).length, [slots]);
 
