@@ -1,433 +1,402 @@
-// app/api/bookings/create/route.ts
-import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import BookingOwnerEmail from "@/app/emails/BookingOwnerEmail";
-import BookingClientEmail from "@/app/emails/BookingClientEmail";
-import { resend, getFromEmail, getAppUrl } from "@/app/lib/resend";
+"use client";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@/app/providers/AuthProvider";
+import { UI } from "@/app/components/ui";
 
-function env(name: string) {
-  const v = process.env[name];
-  if (!v || !v.trim()) throw new Error(`ENV manquante: ${name}`);
-  return v;
-}
+type AvailabilityState =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "available" }
+  | { state: "unavailable"; reason?: string }
+  | { state: "error"; message: string };
 
-function getBearerToken(req: Request) {
-  const auth = req.headers.get("authorization") || "";
-  if (!auth.startsWith("Bearer ")) return null;
-  return auth.slice(7);
-}
+type AvailApiOk = { available: boolean; reason?: string };
+type AvailApiErr = { error?: string; detail?: string; code?: string };
 
-type Body = {
-  parkingId?: string;
-  startTime?: string;
-  endTime?: string;
-  totalPrice?: number;
-  currency?: string;
-};
-
-function safeIso(s: unknown): string | null {
-  if (typeof s !== "string") return null;
-  const t = Date.parse(s);
+function toIsoFromLocal(v: string) {
+  const t = Date.parse(v);
   if (Number.isNaN(t)) return null;
   return new Date(t).toISOString();
 }
 
-const TZ = "Europe/Zurich";
+function cx(...s: Array<string | false | null | undefined>) {
+  return s.filter(Boolean).join(" ");
+}
 
-/**
- * Convertit une date en "parties" locale Suisse:
- * - weekday: 1=lundi ... 7=dimanche
- * - minutes: minutes depuis 00:00 locale
- * - ymd: YYYY-MM-DD locale
- */
-function getLocalParts(d: Date) {
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: TZ,
-    weekday: "short",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
+function extractApiErrorMessage(json: unknown, fallback: string) {
+  if (!json || typeof json !== "object") return fallback;
+  const o = json as Record<string, unknown>;
+
+  const detail = typeof o.detail === "string" ? o.detail : null;
+  const error = typeof o.error === "string" ? o.error : null;
+  const message = typeof o.message === "string" ? o.message : null;
+
+  return detail || error || message || fallback;
+}
+
+function mapBooking409ToUserMessage(payload: unknown): string {
+  // Ton API renvoie { ok:false, error:"Créneau indisponible", detail:"...", code:"..." }
+  if (!payload || typeof payload !== "object") return "Créneau indisponible.";
+
+  const o = payload as Record<string, unknown>;
+  const code = typeof o.code === "string" ? o.code : "";
+  const detail = typeof o.detail === "string" ? o.detail : "";
+  const error = typeof o.error === "string" ? o.error : "Créneau indisponible";
+
+  switch (code) {
+    case "PARKING_OFF":
+      return detail || "Cette place est désactivée par le propriétaire.";
+    case "BOOKING_OVERLAP":
+      return detail || "Cette place est déjà réservée sur ce créneau.";
+    case "BLACKOUT":
+      return detail || "Cette place est indisponible sur ce créneau (blackout).";
+    case "OUTSIDE_AVAILABILITY":
+      return detail || "La réservation est hors des horaires définis par le propriétaire.";
+    case "INDISPONIBLE_OFF":
+      return "Cette place est OFF ce jour-là.";
+    case "INDISPONIBLE_OUTSIDE_HOURS":
+      return "La réservation est hors des horaires définis par le propriétaire.";
+    case "INDISPONIBLE_BLACKOUT":
+      return "Cette place est indisponible sur ce créneau (blackout).";
+    case "INDISPONIBLE_MULTI_DAY":
+      return "La réservation multi-jour n’est pas disponible pour cette place.";
+    default:
+      return detail || error || "Créneau indisponible.";
+  }
+}
+
+export default function BookingForm({
+  parkingId,
+  parkingTitle,
+  priceHour,
+  priceDay,
+}: {
+  parkingId: string;
+  parkingTitle: string;
+  priceHour: number;
+  priceDay: number | null;
+}) {
+  const { ready, session } = useAuth();
+
+  const [start, setStart] = useState<string>("");
+  const [end, setEnd] = useState<string>("");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [availability, setAvailability] = useState<AvailabilityState>({
+    state: "idle",
   });
 
-  const parts = fmt.formatToParts(d);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const abortRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<number | null>(null);
 
-  const wd = get("weekday"); // Mon, Tue, ...
-  const weekdayMap: Record<string, number> = {
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-    Sun: 7,
+  const parsed = useMemo(() => {
+    const s = Date.parse(start);
+    const e = Date.parse(end);
+    const valid = !Number.isNaN(s) && !Number.isNaN(e) && e > s;
+    return { s, e, valid };
+  }, [start, end]);
+
+  const amountChf = useMemo(() => {
+    if (!parsed.valid) return 0;
+
+    const ms = parsed.e - parsed.s;
+    const hours = ms / (1000 * 60 * 60);
+
+    // règle simple : si priceDay et >= 8h => jour (arrondi au jour)
+    if (priceDay && hours >= 8) {
+      const days = Math.max(1, Math.ceil(hours / 24));
+      return days * priceDay;
+    }
+
+    // sinon arrondi à l’heure
+    const h = Math.max(1, Math.ceil(hours));
+    return h * priceHour;
+  }, [parsed, priceHour, priceDay]);
+
+  // Availability check (déjà présent) + UX améliorée
+  useEffect(() => {
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    if (abortRef.current) abortRef.current.abort();
+
+    if (!parsed.valid) {
+      queueMicrotask(() => setAvailability({ state: "idle" }));
+      return;
+    }
+
+    queueMicrotask(() => setAvailability({ state: "checking" }));
+
+    debounceRef.current = window.setTimeout(async () => {
+      try {
+        abortRef.current = new AbortController();
+
+        const sIso = new Date(parsed.s).toISOString();
+        const eIso = new Date(parsed.e).toISOString();
+
+        const url = `/api/bookings/availability?parkingId=${encodeURIComponent(
+          parkingId
+        )}&start=${encodeURIComponent(sIso)}&end=${encodeURIComponent(eIso)}`;
+
+        const res = await fetch(url, { signal: abortRef.current.signal });
+        const json: AvailApiOk | AvailApiErr = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const msg =
+            ("error" in json && typeof json.error === "string" && json.error) ||
+            ("detail" in json && typeof json.detail === "string" && json.detail) ||
+            `Erreur disponibilité (${res.status})`;
+          setAvailability({ state: "error", message: msg });
+          return;
+        }
+
+        const ok = json as AvailApiOk;
+        setAvailability(ok.available ? { state: "available" } : { state: "unavailable", reason: ok.reason });
+      } catch (e: unknown) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        setAvailability({
+          state: "error",
+          message: e instanceof Error ? e.message : "Erreur inconnue",
+        });
+      }
+    }, 450);
+
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, [parsed.valid, parsed.s, parsed.e, parkingId]);
+
+  const canSubmit =
+    ready &&
+    !!session &&
+    parsed.valid &&
+    amountChf > 0 &&
+    availability.state === "available" &&
+    !loading;
+
+  const disabledCard =
+    (parsed.valid && availability.state === "checking") ||
+    (parsed.valid && availability.state === "unavailable");
+
+  const onPay = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!ready) return setError("Session en cours de chargement…");
+    if (!session) return setError("Connecte-toi d’abord.");
+    if (!parsed.valid) return setError("Dates invalides (la fin doit être après le début).");
+    if (amountChf <= 0) return setError("Prix invalide.");
+    if (availability.state !== "available") return setError("Créneau indisponible.");
+
+    setLoading(true);
+
+    try {
+      // 1) create booking (server)
+      const res1 = await fetch("/api/bookings/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          parkingId,
+          startTime: new Date(parsed.s).toISOString(),
+          endTime: new Date(parsed.e).toISOString(),
+          totalPrice: amountChf,
+          currency: "CHF",
+        }),
+      });
+
+      const j1: unknown = await res1.json().catch(() => ({}));
+
+      if (!res1.ok) {
+        // ✅ cas important: 409 = indisponible (planning, blackout, overlap, OFF)
+        if (res1.status === 409) {
+          setError(mapBooking409ToUserMessage(j1));
+          setLoading(false);
+          return;
+        }
+
+        const msg = extractApiErrorMessage(j1, `Erreur create booking (${res1.status})`);
+        setError(msg);
+        setLoading(false);
+        return;
+      }
+
+      const bookingId =
+        typeof j1 === "object" && j1
+          ? ((j1 as { bookingId?: string; booking?: { id?: string } }).bookingId ??
+              (j1 as { booking?: { id?: string } }).booking?.id)
+          : null;
+
+      if (!bookingId) {
+        setError("bookingId manquant (API create).");
+        setLoading(false);
+        return;
+      }
+
+      // 2) stripe checkout
+      const res2 = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          bookingId,
+          parkingTitle,
+          amountChf,
+          currency: "chf",
+        }),
+      });
+
+      const j2: unknown = await res2.json().catch(() => ({}));
+
+      if (!res2.ok) {
+        const msg = extractApiErrorMessage(j2, `Erreur Stripe checkout (${res2.status})`);
+        setError(msg);
+        setLoading(false);
+        return;
+      }
+
+      const url =
+        typeof j2 === "object" && j2 && "url" in j2 && typeof (j2 as { url?: unknown }).url === "string"
+          ? (j2 as { url: string }).url
+          : null;
+
+      if (!url) {
+        setError("Stripe Checkout: URL manquante.");
+        setLoading(false);
+        return;
+      }
+
+      window.location.assign(url);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erreur inconnue");
+      setLoading(false);
+    }
   };
 
-  const weekday = weekdayMap[wd] ?? 0;
+  const startIso = useMemo(() => toIsoFromLocal(start), [start]);
+  const endIso = useMemo(() => toIsoFromLocal(end), [end]);
 
-  const year = get("year");
-  const month = get("month");
-  const day = get("day");
-  const ymd = `${year}-${month}-${day}`;
-
-  const hour = Number(get("hour"));
-  const minute = Number(get("minute"));
-  const minutes = hour * 60 + minute;
-
-  return { weekday, minutes, ymd };
-}
-
-function parseTimeToMinutes(t: string) {
-  // formats possibles: "HH:MM:SS" ou "HH:MM"
-  const [hh, mm] = t.split(":");
-  const h = Number(hh ?? "0");
-  const m = Number(mm ?? "0");
-  return h * 60 + m;
-}
-
-type AvailabilityRow = {
-  weekday: number; // 1..7
-  start_time: string; // time
-  end_time: string; // time
-  enabled: boolean;
-};
-
-function isEnabledAvailability(a: AvailabilityRow) {
-  return !!a.enabled;
-}
-
-function isWithinOneSlot(
-  weekday: number,
-  startMin: number,
-  endMin: number,
-  slots: AvailabilityRow[]
-) {
-  const daySlots = slots
-    .filter((s) => isEnabledAvailability(s) && s.weekday === weekday)
-    .map((s) => ({
-      start: parseTimeToMinutes(s.start_time),
-      end: parseTimeToMinutes(s.end_time),
-    }))
-    .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start);
-
-  // il faut qu'un slot englobe complètement le segment [startMin, endMin]
-  return daySlots.some((s) => s.start <= startMin && s.end >= endMin);
-}
-
-/**
- * Découpe la réservation en segments par jour local (Suisse),
- * et vérifie que chaque segment est couvert par un slot de disponibilité.
- */
-function isBookingCoveredByAvailability(
-  startISO: string,
-  endISO: string,
-  slots: AvailabilityRow[]
-) {
-  const start = new Date(startISO);
-  const end = new Date(endISO);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
-  if (end.getTime() <= start.getTime()) return false;
-
-  // boucle jour par jour en se basant sur le "ymd" local
-  let cursor = new Date(start.getTime());
-
-  // sécurité anti boucle infinie
-  let guard = 0;
-
-  while (cursor.getTime() < end.getTime()) {
-    if (++guard > 40) return false; // bookings > 40 jours -> on refuse par sécurité
-
-    const cursorParts = getLocalParts(cursor);
-    const cursorYmd = cursorParts.ymd;
-
-    // trouver le début du lendemain (local) en construisant "YYYY-MM-DDT00:00:00" local
-    // Sans librairie TZ, on fait une approche robuste:
-    // - on avance en UTC par tranches d'1h jusqu'à changement de ymd local (max 30h)
-    let nextDay = new Date(cursor.getTime());
-    for (let i = 0; i < 30; i++) {
-      nextDay = new Date(nextDay.getTime() + 60 * 60 * 1000);
-      if (getLocalParts(nextDay).ymd !== cursorYmd) break;
-    }
-
-    // segment = [segStart, segEnd] intersecté avec [start,end]
-    const segStart = cursor.getTime() < start.getTime() ? start : cursor;
-    const segEnd = nextDay.getTime() > end.getTime() ? end : nextDay;
-
-    const segStartParts = getLocalParts(segStart);
-    const segEndParts = getLocalParts(segEnd);
-
-    // même jour local attendu
-    const weekday = segStartParts.weekday;
-    if (weekday < 1 || weekday > 7) return false;
-
-    const segStartMin = segStartParts.minutes;
-
-    // si segEnd tombe exactement à 00:00 du lendemain local, on considère endMin = 24h00 pour le jour précédent
-    // (sinon minutes=0 et ça casserait "end > start")
-    let segEndMin = segEndParts.minutes;
-    const segEndYmd = segEndParts.ymd;
-
-    if (segEndYmd !== segStartParts.ymd && segEndMin === 0) {
-      segEndMin = 24 * 60;
-    }
-
-    // segment doit avoir une durée positive
-    if (!(segEnd.getTime() > segStart.getTime())) return false;
-    if (segEndMin <= segStartMin) {
-      // cas rare DST / arrondis -> on refuse pour éviter bug
-      return false;
-    }
-
-    const ok = isWithinOneSlot(weekday, segStartMin, segEndMin, slots);
-    if (!ok) return false;
-
-    // avancer cursor au segEnd
-    cursor = new Date(segEnd.getTime());
-  }
-
-  return true;
-}
-
-export async function POST(req: Request) {
-  try {
-    const supabaseUrl = env("NEXT_PUBLIC_SUPABASE_URL");
-    const anonKey = env("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-    const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
-
-    const token = getBearerToken(req);
-    if (!token) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-
-    const body = (await req.json().catch(() => ({}))) as Body;
-
-    const parkingId = (body.parkingId ?? "").trim();
-    const startTime = safeIso(body.startTime);
-    const endTime = safeIso(body.endTime);
-    const totalPrice = typeof body.totalPrice === "number" ? body.totalPrice : null;
-    const currency = typeof body.currency === "string" ? body.currency : "CHF";
-
-    if (!parkingId) return NextResponse.json({ ok: false, error: "parkingId manquant" }, { status: 400 });
-    if (!startTime || !endTime) return NextResponse.json({ ok: false, error: "Dates invalides" }, { status: 400 });
-    if (Date.parse(endTime) <= Date.parse(startTime))
-      return NextResponse.json({ ok: false, error: "endTime doit être après startTime" }, { status: 400 });
-
-    // Auth user via anon + bearer
-    const supabaseAuth = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false },
-    });
-
-    const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
-    if (uErr || !u.user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-
-    const clientId = u.user.id;
-
-    // Admin client (service role)
-    const admin = createClient(supabaseUrl, serviceKey, {
-      auth: { persistSession: false },
-    });
-
-    // Get parking + owner  ✅ (ajout is_active)
-    const { data: p, error: pErr } = await admin
-      .from("parkings")
-      .select("id,title,owner_id,is_active")
-      .eq("id", parkingId)
-      .maybeSingle();
-
-    if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
-    if (!p) return NextResponse.json({ ok: false, error: "Parking introuvable" }, { status: 404 });
-
-    // ✅ OFF global: si la place est désactivée, on bloque
-    const isActive = (p as { is_active?: boolean | null }).is_active;
-    if (isActive === false) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Créneau indisponible",
-          detail: "Cette place est désactivée par le propriétaire.",
-          code: "PARKING_OFF",
-        },
-        { status: 409 }
-      );
-    }
-
-    const ownerId = (p as { owner_id: string }).owner_id;
-    const parkingTitle = (p as { title: string | null }).title ?? "Place";
-
-    // =========================
-    // ✅ AVAILABILITY / BLACKOUTS / OVERLAP CHECKS
-    // =========================
-
-    const availabilityEnabled =
-      (process.env.NEXT_PUBLIC_AVAILABILITY_ENABLED ?? "true").toLowerCase() !== "false";
-
-    // 1) Chevauchement avec booking existant (non annulé)
-    // overlap si: start < existing_end AND end > existing_start
-    const { data: overlaps, error: ovErr } = await admin
-      .from("bookings")
-      .select("id,status,start_time,end_time")
-      .eq("parking_id", parkingId)
-      .neq("status", "cancelled")
-      .lt("start_time", endTime)
-      .gt("end_time", startTime)
-      .limit(1);
-
-    if (ovErr) return NextResponse.json({ ok: false, error: ovErr.message }, { status: 500 });
-
-    if ((overlaps ?? []).length > 0) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Créneau indisponible",
-          detail: "Cette place est déjà réservée sur ce créneau.",
-          code: "BOOKING_OVERLAP",
-        },
-        { status: 409 }
-      );
-    }
-
-    if (availabilityEnabled) {
-      // 2) Blackouts (indisponibilités ponctuelles)
-      const { data: blackouts, error: boErr } = await admin
-        .from("parking_blackouts")
-        .select("id,start_at,end_at")
-        .eq("parking_id", parkingId)
-        .lt("start_at", endTime)
-        .gt("end_at", startTime)
-        .limit(1);
-
-      if (boErr) return NextResponse.json({ ok: false, error: boErr.message }, { status: 500 });
-
-      if ((blackouts ?? []).length > 0) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "Créneau indisponible",
-            detail: "Cette place est indisponible sur ce créneau (planning propriétaire).",
-            code: "BLACKOUT",
-          },
-          { status: 409 }
-        );
-      }
-
-      // 3) Planning hebdo (fallback si aucun slot)
-      const { data: slots, error: slErr } = await admin
-        .from("parking_availability")
-        .select("weekday,start_time,end_time,enabled")
-        .eq("parking_id", parkingId);
-
-      if (slErr) return NextResponse.json({ ok: false, error: slErr.message }, { status: 500 });
-
-      const slotRows = ((slots ?? []) as AvailabilityRow[]).filter((s) => s && typeof s.weekday === "number");
-
-      const hasAnyPlanning = slotRows.some((s) => isEnabledAvailability(s));
-
-      // ✅ fallback : pas de planning => on ne bloque pas (comportement legacy)
-      if (hasAnyPlanning) {
-        const covered = isBookingCoveredByAvailability(startTime, endTime, slotRows);
-        if (!covered) {
-          return NextResponse.json(
-            {
-              ok: false,
-              error: "Créneau indisponible",
-              detail: "La réservation est hors des horaires définis par le propriétaire.",
-              code: "OUTSIDE_AVAILABILITY",
-            },
-            { status: 409 }
-          );
+  const statusLine =
+    availability.state === "checking"
+      ? { text: "Vérification disponibilité…", cls: "text-slate-600" }
+      : availability.state === "available"
+      ? { text: "✅ Disponible", cls: "font-medium text-emerald-700" }
+      : availability.state === "unavailable"
+      ? {
+          text: availability.reason ? `❌ Indisponible — ${availability.reason}` : "❌ Indisponible sur ce créneau",
+          cls: "font-medium text-rose-700",
         }
-      }
-    }
+      : availability.state === "error"
+      ? { text: `Erreur disponibilité : ${availability.message}`, cls: "text-rose-700" }
+      : { text: "—", cls: "text-slate-500" };
 
-    // =========================
-    // ✅ INSERT BOOKING
-    // =========================
+  return (
+    <form onSubmit={onPay} className="space-y-4">
+      {/* Dates */}
+      <div className="grid gap-4">
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-slate-800">Début</label>
+          <input
+            type="datetime-local"
+            value={start}
+            onChange={(e) => {
+              setStart(e.target.value);
+              if (error) setError(null);
+            }}
+            required
+            className={UI.input}
+          />
+        </div>
 
-    const { data: b, error: bErr } = await admin
-      .from("bookings")
-      .insert({
-        parking_id: parkingId,
-        user_id: clientId,
-        start_time: startTime,
-        end_time: endTime,
-        total_price: totalPrice,
-        currency,
-        status: "pending",
-        payment_status: "unpaid",
-      })
-      .select("id,parking_id,user_id,start_time,end_time,total_price,currency")
-      .maybeSingle();
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-slate-800">Fin</label>
+          <input
+            type="datetime-local"
+            value={end}
+            onChange={(e) => {
+              setEnd(e.target.value);
+              if (error) setError(null);
+            }}
+            required
+            className={UI.input}
+          />
+        </div>
+      </div>
 
-    if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
-    if (!b) return NextResponse.json({ ok: false, error: "Insert booking failed" }, { status: 500 });
+      {/* Résumé */}
+      <div
+        className={cx(
+          UI.card,
+          UI.cardPad,
+          "bg-gradient-to-b from-violet-50/80 to-white",
+          disabledCard ? "opacity-60 grayscale" : ""
+        )}
+      >
+        <div className="space-y-2">
+          <div className="flex flex-wrap justify-between gap-2 text-sm">
+            <span className="text-slate-600">Estimation</span>
+            <span className="font-semibold text-slate-900">
+              {amountChf > 0 ? `${amountChf} CHF` : "—"}
+            </span>
+          </div>
 
-    // Fetch emails (owner + client)
-    const [ownerRes, clientRes] = await Promise.all([
-      admin.auth.admin.getUserById(ownerId),
-      admin.auth.admin.getUserById(clientId),
-    ]);
+          <div className="text-xs text-slate-500">
+            {priceDay ? `Tarif : ${priceHour} CHF/h ou ${priceDay} CHF/j` : `Tarif : ${priceHour} CHF/h`}
+          </div>
 
-    const ownerEmail = ownerRes.data?.user?.email ?? null;
-    const clientEmail = clientRes.data?.user?.email ?? null;
+          {parsed.valid ? <div className={cx("pt-2 text-sm", statusLine.cls)}>{statusLine.text}</div> : null}
 
-    const appUrl = getAppUrl();
-    const from = getFromEmail();
+          {/* Debug (optionnel) */}
+          {startIso && endIso ? (
+            <div className="text-[11px] text-slate-400">
+              {startIso} → {endIso}
+            </div>
+          ) : null}
 
-    // Send emails (best effort)
-    const emailJobs: Array<Promise<unknown>> = [];
+          {!session && ready ? (
+            <div className="text-xs text-slate-600 pt-1">Connecte-toi pour payer et réserver.</div>
+          ) : null}
 
-    if (ownerEmail) {
-      emailJobs.push(
-        resend.emails.send({
-          from,
-          to: [ownerEmail],
-          subject: `Nouvelle réservation — ${parkingTitle}`,
-          react: BookingOwnerEmail({
-            ownerEmail,
-            parkingTitle,
-            startTime: new Date(b.start_time as string).toLocaleString("fr-CH", { timeZone: TZ }),
-            endTime: new Date(b.end_time as string).toLocaleString("fr-CH", { timeZone: TZ }),
-            totalPrice: (b.total_price as number | null) ?? null,
-            currency: (b.currency as string | null) ?? "CHF",
-            bookingId: b.id as string,
-            appUrl,
-          }),
-        })
-      );
-    }
+          {start && end && !parsed.valid ? (
+            <div className="text-xs text-rose-700 pt-1">Dates invalides : la fin doit être après le début.</div>
+          ) : null}
 
-    if (clientEmail) {
-      emailJobs.push(
-        resend.emails.send({
-          from,
-          to: [clientEmail],
-          subject: `Confirmation réservation — ${parkingTitle}`,
-          react: BookingClientEmail({
-            clientEmail,
-            parkingTitle,
-            startTime: new Date(b.start_time as string).toLocaleString("fr-CH", { timeZone: TZ }),
-            endTime: new Date(b.end_time as string).toLocaleString("fr-CH", { timeZone: TZ }),
-            totalPrice: (b.total_price as number | null) ?? null,
-            currency: (b.currency as string | null) ?? "CHF",
-            bookingId: b.id as string,
-            appUrl,
-          }),
-        })
-      );
-    }
+          {/* ✅ label visuel */}
+          {parsed.valid && availability.state === "unavailable" ? (
+            <div className="pt-1 text-xs font-medium text-rose-700">Indisponible</div>
+          ) : null}
+        </div>
+      </div>
 
-    await Promise.allSettled(emailJobs);
+      {/* CTA */}
+      <button
+        type="submit"
+        className={cx(UI.btnBase, UI.btnPrimary, "w-full", !canSubmit ? "opacity-60 cursor-not-allowed" : "")}
+        disabled={!canSubmit}
+        title={
+          !ready
+            ? "Chargement session…"
+            : !session
+            ? "Connecte-toi d’abord"
+            : !parsed.valid
+            ? "Dates invalides"
+            : availability.state === "checking"
+            ? "Vérification disponibilité…"
+            : availability.state !== "available"
+            ? "Créneau indisponible"
+            : ""
+        }
+      >
+        {loading ? "Redirection…" : "Payer et réserver"}
+      </button>
 
-    return NextResponse.json({ ok: true, bookingId: b.id, booking: b }, { status: 200 });
-  } catch (e: unknown) {
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : "Server error" },
-      { status: 500 }
-    );
-  }
+      {error ? <p className="text-sm text-rose-700">Erreur : {error}</p> : null}
+    </form>
+  );
 }
