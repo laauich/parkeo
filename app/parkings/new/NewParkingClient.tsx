@@ -50,6 +50,10 @@ function guessPartsFromDisplayName(displayName: string) {
   return { street, streetNumber, postalCode, city };
 }
 
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
 type Step = "form" | "availability";
 
 export default function NewParkingClient() {
@@ -212,12 +216,18 @@ export default function NewParkingClient() {
       return;
     }
 
-    // ✅ on passe à l'étape planning
-    setCreatedId(created.id);
+    // ✅ sécurise l'id renvoyé
+    const createdIdSafe = String((created as { id?: unknown })?.id ?? "").trim();
+
+    if (!createdIdSafe || createdIdSafe === "undefined" || createdIdSafe === "null" || !isUuid(createdIdSafe)) {
+      setError(`Erreur: id de place invalide renvoyé par Supabase (reçu="${createdIdSafe || "—"}")`);
+      return;
+    }
+
+    setCreatedId(createdIdSafe);
     setStep("availability");
     setError(null);
 
-    // petit scroll smooth vers le haut
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -267,7 +277,7 @@ export default function NewParkingClient() {
   }
 
   // ===== Step 2: Availability after creation =====
-  if (step === "availability" && createdId) {
+  if (step === "availability" && createdId && isUuid(createdId)) {
     return (
       <main className={UI.page}>
         <div className={`${UI.container} ${UI.section} space-y-6`}>
@@ -318,7 +328,6 @@ export default function NewParkingClient() {
                 type="button"
                 className={`${UI.btnBase} ${UI.btnGhost}`}
                 onClick={() => {
-                  // repartir sur une nouvelle création si besoin
                   resetAll();
                   router.refresh();
                 }}
@@ -339,9 +348,7 @@ export default function NewParkingClient() {
         <header className={UI.sectionTitleRow}>
           <div>
             <h1 className={UI.h1}>Proposer une place</h1>
-            <p className={UI.p}>
-              Une fiche complète (adresse, photos, équipements) augmente les réservations.
-            </p>
+            <p className={UI.p}>Une fiche complète (adresse, photos, équipements) augmente les réservations.</p>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -416,9 +423,7 @@ export default function NewParkingClient() {
                 }}
                 placeholder="Ex: Rue du Rhône 12, Genève"
               />
-              <p className={UI.subtle}>
-                Sélectionne une adresse pour positionner automatiquement la carte.
-              </p>
+              <p className={UI.subtle}>Sélectionne une adresse pour positionner automatiquement la carte.</p>
             </div>
 
             <div className={UI.divider} />
@@ -615,11 +620,7 @@ export default function NewParkingClient() {
 
           {/* ===== Actions ===== */}
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <button
-              className={`${UI.btnBase} ${UI.btnPrimary} w-full sm:w-auto`}
-              disabled={saving}
-              type="submit"
-            >
+            <button className={`${UI.btnBase} ${UI.btnPrimary} w-full sm:w-auto`} disabled={saving} type="submit">
               {saving ? "Création…" : "Créer la place"}
             </button>
 
@@ -639,9 +640,7 @@ export default function NewParkingClient() {
           {/* ✅ note planning */}
           <div className={`${UI.card} ${UI.cardPad} border-slate-200/70 bg-white/60`}>
             <div className="text-sm text-slate-900 font-semibold">⏱ Planning de disponibilité</div>
-            <p className={UI.p}>
-              Après la création, tu pourras définir les horaires de disponibilité (optionnel).
-            </p>
+            <p className={UI.p}>Après la création, tu pourras définir les horaires de disponibilité (optionnel).</p>
           </div>
         </form>
       </div>
