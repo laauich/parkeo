@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 
@@ -26,20 +27,7 @@ function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
-function isTimeHHMM(v: string) {
-  return /^\d{2}:\d{2}$/.test(v);
-}
-
-function toHHMM(v: unknown, fallback = "08:00") {
-  const s = typeof v === "string" ? v.trim() : "";
-  if (!s) return fallback;
-  if (/^\d{2}:\d{2}$/.test(s)) return s;
-  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s.slice(0, 5);
-  return fallback;
-}
-
 function defaultSlots(): Slot[] {
-  // par défaut: semaine ON 08:00-18:00
   return DAYS.map((d) => ({
     weekday: d.weekday,
     start_time: "08:00",
@@ -75,25 +63,23 @@ function presetAllDay(): Slot[] {
   }));
 }
 
-function normalizeSlotsFromApi(apiSlots: Array<Partial<Slot>>): Slot[] {
+function isTimeHHMM(v: string) {
+  return /^\d{2}:\d{2}$/.test(v);
+}
+
+function normalizeSlotsFromApi(apiSlots: Slot[]): Slot[] {
   const map = new Map<number, Slot>();
-
-  for (const raw of apiSlots ?? []) {
-    const wd = typeof raw.weekday === "number" ? raw.weekday : 0;
-    if (wd < 1 || wd > 7) continue;
-
-    map.set(wd, {
-      weekday: wd,
-      start_time: toHHMM(raw.start_time, "08:00"),
-      end_time: toHHMM(raw.end_time, "18:00"),
-      enabled: Boolean(raw.enabled),
+  for (const s of apiSlots ?? []) {
+    map.set(s.weekday, {
+      weekday: s.weekday,
+      start_time: s.start_time,
+      end_time: s.end_time,
+      enabled: Boolean(s.enabled),
     });
   }
 
-  // ✅ aucun planning en DB -> défaut UI
   if (map.size === 0) return defaultSlots();
 
-  // sinon: jours manquants en OFF
   return DAYS.map((d) => {
     const found = map.get(d.weekday);
     return found
@@ -103,6 +89,7 @@ function normalizeSlotsFromApi(apiSlots: Array<Partial<Slot>>): Slot[] {
 }
 
 export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: string }) {
+  const router = useRouter();
   const { ready, session } = useAuth();
 
   const [slots, setSlots] = useState<Slot[]>(defaultSlots());
@@ -147,7 +134,11 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
 
   const load = async () => {
     if (!authHeader) return;
-    if (!parkingReady) return;
+    if (!parkingReady) {
+      setErr(null);
+      setOkMsg(null);
+      return;
+    }
 
     setLoading(true);
     setErr(null);
@@ -158,7 +149,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
       const res = await fetch(url, { headers: authHeader });
 
       const json = (await res.json().catch(() => ({}))) as
-        | { ok: true; slots: Array<Partial<Slot>> }
+        | { ok: true; slots: Slot[] }
         | { ok: false; error: string };
 
       if (!res.ok || !("ok" in json) || json.ok === false) {
@@ -177,8 +168,9 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
 
   const save = async () => {
     if (!authHeader) return;
+
     if (!parkingReady) {
-      setErr("parkingId invalide (place non chargée)");
+      setErr("parkingId invalide (la place n’est pas encore chargée)");
       return;
     }
 
@@ -211,7 +203,9 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
       setOkMsg("✅ Planning enregistré !");
       setSaving(false);
 
-      await load();
+      // ✅ REDIRECTION COMME AVANT
+      router.push("/my-parkings");
+      router.refresh();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Erreur enregistrement planning");
       setSaving(false);
@@ -220,10 +214,10 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
 
   useEffect(() => {
     if (!ready || !session || !authHeader) return;
-    if (!parkingReady) return;
+    if (!parkingId || !isUuid(parkingId)) return;
     queueMicrotask(() => void load());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, session?.user?.id, parkingReady, parkingIdSafe]);
+  }, [ready, session?.user?.id, parkingId]);
 
   const enabledCount = useMemo(() => slots.filter((s) => s.enabled).length, [slots]);
 
@@ -261,7 +255,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
           <span className={UI.chip}>
             Jours actifs : <b>{enabledCount}/7</b>
           </span>
-          <span className={UI.chip}>Planning propriétaire</span>
+          <span className={UI.chip}>Optionnel (fallback si vide)</span>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -276,12 +270,6 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
           </button>
         </div>
       </div>
-
-      {loading ? (
-        <div className={`${UI.card} ${UI.cardPad}`}>
-          <p className={UI.p}>Chargement du planning…</p>
-        </div>
-      ) : null}
 
       <div className="grid gap-3">
         {DAYS.map((d) => {
