@@ -63,8 +63,14 @@ function isTimeHHMM(v: string) {
   return /^\d{2}:\d{2}$/.test(v);
 }
 
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
 export default function AvailabilityPage({ params }: { params: { id: string } }) {
-  const parkingId = params.id;
+  const parkingId = params?.id ?? "";
+  const parkingIdOk = useMemo(() => isUuid(String(parkingId)), [parkingId]);
+
   const { ready, session } = useAuth();
 
   const [slots, setSlots] = useState<Slot[]>(defaultSlots());
@@ -80,12 +86,22 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
 
   const load = async () => {
     if (!authHeader) return;
+
+    // ✅ STOP net: jamais d'appel API si l'ID est invalide
+    if (!parkingIdOk) {
+      setErr("parkingId invalide (URL incorrecte)");
+      setOkMsg(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setErr(null);
     setOkMsg(null);
 
     const url = `/api/owner/availability/get?parkingId=${encodeURIComponent(parkingId)}`;
     const res = await fetch(url, { headers: authHeader });
+
     const json = (await res.json().catch(() => ({}))) as
       | { ok: true; slots: Slot[] }
       | { ok: false; error: string };
@@ -99,7 +115,6 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
     }
 
     if (Array.isArray(json.slots) && json.slots.length > 0) {
-      // on remappe pour être sûr qu'on a un slot pour chaque weekday
       const map = new Map<number, Slot>();
       for (const s of json.slots) map.set(s.weekday, s);
 
@@ -117,21 +132,19 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
         })
       );
     } else {
-      // aucun planning => on garde default local
       setSlots(defaultSlots());
     }
   };
 
   useEffect(() => {
     if (!ready || !session || !authHeader) return;
+    if (!parkingIdOk) return; // ✅ jamais de call si ID invalide
     queueMicrotask(() => void load());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, session?.user?.id, parkingId]);
+  }, [ready, session?.user?.id, parkingIdOk, parkingId]);
 
   const setSlot = (weekday: number, patch: Partial<Slot>) => {
-    setSlots((prev) =>
-      prev.map((s) => (s.weekday === weekday ? { ...s, ...patch, weekday } : s))
-    );
+    setSlots((prev) => prev.map((s) => (s.weekday === weekday ? { ...s, ...patch, weekday } : s)));
   };
 
   const copyToAll = (weekday: number) => {
@@ -167,6 +180,15 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
 
   const save = async () => {
     if (!authHeader) return;
+
+    // ✅ STOP net: jamais d'upsert si ID invalide
+    if (!parkingIdOk) {
+      setErr("parkingId invalide (URL incorrecte)");
+      setOkMsg(null);
+      setSaving(false);
+      return;
+    }
+
     setErr(null);
     setOkMsg(null);
 
@@ -181,10 +203,7 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
     const res = await fetch("/api/owner/availability/upsert", {
       method: "POST",
       headers: { ...authHeader, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        parkingId,
-        slots,
-      }),
+      body: JSON.stringify({ parkingId, slots }),
     });
 
     const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
@@ -209,9 +228,19 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
             <p className={UI.p}>
               Définis quand ta place peut être louée. Si tu ne configures rien, la place reste “ouverte” (fallback legacy).
             </p>
+
             <div className="flex flex-wrap gap-2 pt-2">
-              <span className={UI.chip}>Place : <span className="font-mono">{parkingId}</span></span>
-              <span className={UI.chip}>Jours actifs : <b>{enabledCount}/7</b></span>
+              <span className={UI.chip}>
+                Place : <span className="font-mono">{parkingId || "—"}</span>
+              </span>
+              <span className={UI.chip}>
+                Jours actifs : <b>{enabledCount}/7</b>
+              </span>
+              {!parkingIdOk ? (
+                <span className={`${UI.chip} border border-rose-200 bg-rose-50/60 text-rose-700`}>
+                  URL invalide
+                </span>
+              ) : null}
             </div>
           </div>
 
@@ -219,9 +248,11 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
             <Link href="/my-parkings" className={`${UI.btnBase} ${UI.btnGhost}`}>
               ← Mes places
             </Link>
-            <Link href={`/my-parkings/${parkingId}/edit`} className={`${UI.btnBase} ${UI.btnGhost}`}>
-              Modifier la place
-            </Link>
+            {parkingIdOk ? (
+              <Link href={`/my-parkings/${parkingId}/edit`} className={`${UI.btnBase} ${UI.btnGhost}`}>
+                Modifier la place
+              </Link>
+            ) : null}
           </div>
         </header>
 
@@ -234,6 +265,18 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
             <p className={UI.p}>Tu dois être connecté.</p>
             <Link href="/login" className={`${UI.btnBase} ${UI.btnPrimary}`}>
               Se connecter
+            </Link>
+          </div>
+        ) : !parkingIdOk ? (
+          <div className={`${UI.card} ${UI.cardPad} border border-rose-200 bg-rose-50/60 space-y-2`}>
+            <p className="text-sm text-rose-700">
+              <b>Erreur :</b> parkingId invalide.
+            </p>
+            <p className="text-sm text-slate-700">
+              Ça arrive si tu as navigué vers une URL du style <span className="font-mono">/my-parkings/undefined/availability</span>.
+            </p>
+            <Link href="/my-parkings" className={`${UI.btnBase} ${UI.btnPrimary}`}>
+              Retour à Mes places
             </Link>
           </div>
         ) : (
@@ -278,23 +321,20 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
             <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
               <div className="flex items-center justify-between">
                 <h2 className={UI.h2}>Semaine</h2>
-                <button
-                  type="button"
-                  className={`${UI.btnBase} ${UI.btnGhost}`}
-                  onClick={() => setSlots(defaultSlots())}
-                >
+                <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => setSlots(defaultSlots())}>
                   Réinitialiser
                 </button>
               </div>
 
               <div className="grid gap-3">
                 {DAYS.map((d) => {
-                  const s = slots.find((x) => x.weekday === d.weekday) ?? {
-                    weekday: d.weekday,
-                    start_time: "08:00",
-                    end_time: "18:00",
-                    enabled: false,
-                  };
+                  const s =
+                    slots.find((x) => x.weekday === d.weekday) ?? ({
+                      weekday: d.weekday,
+                      start_time: "08:00",
+                      end_time: "18:00",
+                      enabled: false,
+                    } satisfies Slot);
 
                   return (
                     <div
@@ -318,9 +358,7 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
                           </div>
                           <div>
                             <div className="font-semibold text-slate-900">{d.label}</div>
-                            <div className="text-xs text-slate-500">
-                              {s.enabled ? "Disponible" : "Fermé"}
-                            </div>
+                            <div className="text-xs text-slate-500">{s.enabled ? "Disponible" : "Fermé"}</div>
                           </div>
                         </div>
 
@@ -381,16 +419,11 @@ export default function AvailabilityPage({ params }: { params: { id: string } })
                       <div className="sm:w-[180px]">
                         <div className="h-3 rounded-full bg-slate-100 overflow-hidden border border-slate-200/70">
                           <div
-                            className={[
-                              "h-full",
-                              s.enabled ? "bg-violet-600/70" : "bg-slate-300/60",
-                            ].join(" ")}
+                            className={["h-full", s.enabled ? "bg-violet-600/70" : "bg-slate-300/60"].join(" ")}
                             style={{ width: s.enabled ? "100%" : "25%" }}
                           />
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {s.enabled ? `${s.start_time} → ${s.end_time}` : "Désactivé"}
-                        </div>
+                        <div className="mt-1 text-xs text-slate-500">{s.enabled ? `${s.start_time} → ${s.end_time}` : "Désactivé"}</div>
                       </div>
                     </div>
                   );
