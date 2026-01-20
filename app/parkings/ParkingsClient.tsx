@@ -222,6 +222,7 @@ export default function ParkingsClient({
   }, [lastUpdatedAt]);
 
   // ✅ Check disponibilité “now → +1h” pour les cards visibles (filtered)
+  // => planning propriétaire + blackouts + overlaps + OFF global (car ton endpoint le gère)
   useEffect(() => {
     if (filtered.length === 0) return;
 
@@ -230,7 +231,7 @@ export default function ParkingsClient({
 
     // set "checking" pour ceux qui n'ont pas encore un state
     setAvailabilityById((prev) => {
-      const next = { ...prev };
+      const next: Record<string, AvState> = { ...prev };
       for (const p of filtered) {
         if (!next[p.id]) next[p.id] = { state: "checking" };
       }
@@ -262,7 +263,11 @@ export default function ParkingsClient({
               endIso
             )}`;
 
-            const res = await fetch(url, { signal: controller.signal });
+            const res = await fetch(url, {
+              signal: controller.signal,
+              cache: "no-store",
+            });
+
             const json: AvailApiOk | AvailApiErr = await res
               .json()
               .catch(() => ({}));
@@ -469,10 +474,13 @@ export default function ParkingsClient({
             {filtered.map((p) => {
               const photo = p.photos?.[0] ?? null;
 
-              const av = availabilityById[p.id] ?? { state: "checking" as const };
+              const av: AvState =
+                availabilityById[p.id] ?? { state: "checking" };
 
-              const unavailable = av.state === "unavailable";
+              const isUnavailable = av.state === "unavailable";
+              const isChecking = av.state === "checking";
 
+              // ✅ texte + style
               const status =
                 av.state === "checking"
                   ? { text: "Vérification…", cls: "text-slate-600" }
@@ -486,7 +494,10 @@ export default function ParkingsClient({
                       cls: "font-medium text-rose-700",
                     }
                   : av.state === "error"
-                  ? { text: "Disponibilité inconnue", cls: "font-medium text-amber-700" }
+                  ? {
+                      text: "Disponibilité inconnue",
+                      cls: "font-medium text-amber-700",
+                    }
                   : { text: "—", cls: "text-slate-500" };
 
               return (
@@ -496,17 +507,26 @@ export default function ParkingsClient({
                   className={cx(
                     UI.card,
                     UI.cardHover,
-                    "block overflow-hidden",
-                    unavailable ? "opacity-60 grayscale" : ""
+                    "block overflow-hidden relative",
+                    isUnavailable ? "opacity-60 grayscale" : ""
                   )}
                   title={
-                    av.state === "unavailable"
+                    isUnavailable
                       ? av.reason || "Indisponible"
-                      : av.state === "checking"
+                      : isChecking
                       ? "Vérification disponibilité…"
                       : ""
                   }
                 >
+                  {/* ✅ badge ultra visible (même si la card est grisée) */}
+                  {isUnavailable ? (
+                    <div className="absolute top-3 left-3 z-10">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg">
+                        ❌ Indisponible
+                      </span>
+                    </div>
+                  ) : null}
+
                   <div className="w-full h-40 bg-slate-100">
                     {photo ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -563,8 +583,20 @@ export default function ParkingsClient({
                       ) : null}
                     </div>
 
-                    <div className="mt-4 flex items-center justify-between">
-                      <span className={cx(UI.chip, status.cls)}>{status.text}</span>
+                    <div className="mt-4 flex items-center justify-between gap-2">
+                      {/* ✅ chip status en couleur vive (rose si indispo) */}
+                      <span
+                        className={cx(
+                          UI.chip,
+                          isUnavailable
+                            ? "bg-rose-100 text-rose-700 font-semibold"
+                            : av.state === "available"
+                            ? "bg-emerald-100 text-emerald-700 font-semibold"
+                            : status.cls
+                        )}
+                      >
+                        {status.text}
+                      </span>
 
                       <span
                         className={[
@@ -573,7 +605,7 @@ export default function ParkingsClient({
                           "px-3 py-1.5 text-xs",
                           "rounded-full",
                           "pointer-events-none",
-                          unavailable ? "opacity-70" : "",
+                          isUnavailable ? "opacity-70" : "",
                         ].join(" ")}
                       >
                         Détails
@@ -595,7 +627,8 @@ export default function ParkingsClient({
           </div>
 
           <div className="mt-4 text-xs text-slate-500">
-            * “Disponible / Indisponible” correspond à un check <b>maintenant → +1h</b> (planning propriétaire, blackouts, réservations).
+            * “Disponible / Indisponible” correspond à un check <b>maintenant → +1h</b>{" "}
+            (planning propriétaire, blackouts, réservations, OFF global).
           </div>
         </section>
       </div>

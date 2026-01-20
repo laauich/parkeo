@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 
@@ -12,7 +13,7 @@ type Slot = {
   enabled: boolean;
 };
 
-// ✅ Ce que renvoie l’API /api/owner/availability/get (souvent start_time/end_time = "HH:MM:SS")
+// ce que renvoie l’API (souvent HH:MM:SS)
 type SlotApi = {
   weekday: number;
   start_time: string;
@@ -39,7 +40,7 @@ function isUuid(v: string) {
   );
 }
 
-// ✅ Normalise "HH:MM:SS" -> "HH:MM"
+// normalise "HH:MM:SS" -> "HH:MM"
 function toHHMM(t: unknown): string {
   if (typeof t !== "string") return "08:00";
   const s = t.trim();
@@ -48,7 +49,7 @@ function toHHMM(t: unknown): string {
   return "08:00";
 }
 
-// ✅ Tolérant pour validation: HH:MM ou HH:MM:SS
+// tolérant pour validation: HH:MM ou HH:MM:SS
 function isTimeOk(v: string) {
   return /^\d{2}:\d{2}(:\d{2})?$/.test(v);
 }
@@ -104,10 +105,8 @@ function normalizeSlotsFromApi(apiSlots: SlotApi[]): Slot[] {
     });
   }
 
-  // ✅ si rien en DB => defaults
   if (map.size === 0) return defaultSlots();
 
-  // ✅ Always return 7 days
   return DAYS.map((d) => {
     const found = map.get(d.weekday);
     return found
@@ -131,6 +130,7 @@ function isApiErr(x: unknown): x is ApiErr {
 }
 
 export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: string }) {
+  const router = useRouter();
   const { ready, session } = useAuth();
 
   const [slots, setSlots] = useState<Slot[]>(defaultSlots());
@@ -254,7 +254,6 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
     setSaving(true);
 
     try {
-      // ✅ on envoie toujours HH:MM
       const payloadSlots: Slot[] = slots.map((s) => ({
         weekday: s.weekday,
         start_time: toHHMM(s.start_time),
@@ -269,6 +268,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
       });
 
       const json: unknown = await res.json().catch(() => ({}));
+
       if (!res.ok) {
         const msg =
           json && typeof json === "object" && "error" in (json as Record<string, unknown>) &&
@@ -299,7 +299,11 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
       setOkMsg("✅ Planning enregistré !");
       setSaving(false);
 
-      await load();
+      // ✅ REDIRECTION comme avant
+      // petit délai pour laisser l’utilisateur voir le message
+      setTimeout(() => {
+        router.push("/my-parkings");
+      }, 450);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Erreur enregistrement planning");
       setSaving(false);
