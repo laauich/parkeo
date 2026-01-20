@@ -85,7 +85,7 @@ function getLocalParts(d: Date) {
 
 function parseTimeToMinutes(t: string) {
   // formats possibles: "HH:MM:SS" ou "HH:MM"
-  const [hh, mm] = t.split(":");
+  const [hh, mm] = String(t ?? "").split(":");
   const h = Number(hh ?? "0");
   const m = Number(mm ?? "0");
   return h * 60 + m;
@@ -146,9 +146,7 @@ function isBookingCoveredByAvailability(
     const cursorParts = getLocalParts(cursor);
     const cursorYmd = cursorParts.ymd;
 
-    // trouver le début du lendemain (local) en construisant "YYYY-MM-DDT00:00:00" local
-    // Sans librairie TZ, on fait une approche robuste:
-    // - on avance en UTC par tranches d'1h jusqu'à changement de ymd local (max 30h)
+    // Sans librairie TZ, on avance en UTC par tranches d'1h jusqu'à changement de ymd local (max 30h)
     let nextDay = new Date(cursor.getTime());
     for (let i = 0; i < 30; i++) {
       nextDay = new Date(nextDay.getTime() + 60 * 60 * 1000);
@@ -162,32 +160,25 @@ function isBookingCoveredByAvailability(
     const segStartParts = getLocalParts(segStart);
     const segEndParts = getLocalParts(segEnd);
 
-    // même jour local attendu
     const weekday = segStartParts.weekday;
     if (weekday < 1 || weekday > 7) return false;
 
     const segStartMin = segStartParts.minutes;
 
-    // si segEnd tombe exactement à 00:00 du lendemain local, on considère endMin = 24h00 pour le jour précédent
-    // (sinon minutes=0 et ça casserait "end > start")
     let segEndMin = segEndParts.minutes;
     const segEndYmd = segEndParts.ymd;
 
+    // si segEnd tombe exactement à 00:00 du lendemain local, on considère endMin = 24h00 pour le jour précédent
     if (segEndYmd !== segStartParts.ymd && segEndMin === 0) {
       segEndMin = 24 * 60;
     }
 
-    // segment doit avoir une durée positive
     if (!(segEnd.getTime() > segStart.getTime())) return false;
-    if (segEndMin <= segStartMin) {
-      // cas rare DST / arrondis -> on refuse pour éviter bug
-      return false;
-    }
+    if (segEndMin <= segStartMin) return false;
 
     const ok = isWithinOneSlot(weekday, segStartMin, segEndMin, slots);
     if (!ok) return false;
 
-    // avancer cursor au segEnd
     cursor = new Date(segEnd.getTime());
   }
 
@@ -232,15 +223,29 @@ export async function POST(req: Request) {
       auth: { persistSession: false },
     });
 
-    // Get parking + owner
+    // Get parking + owner ✅ (ajout is_active)
     const { data: p, error: pErr } = await admin
       .from("parkings")
-      .select("id,title,owner_id")
+      .select("id,title,owner_id,is_active")
       .eq("id", parkingId)
       .maybeSingle();
 
     if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
     if (!p) return NextResponse.json({ ok: false, error: "Parking introuvable" }, { status: 404 });
+
+    // ✅ OFF global
+    const isActive = (p as { is_active?: boolean | null }).is_active;
+    if (isActive === false) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Créneau indisponible",
+          detail: "Cette place est désactivée par le propriétaire.",
+          code: "PARKING_OFF",
+        },
+        { status: 409 }
+      );
+    }
 
     const ownerId = (p as { owner_id: string }).owner_id;
     const parkingTitle = (p as { title: string | null }).title ?? "Place";
@@ -252,8 +257,7 @@ export async function POST(req: Request) {
     const availabilityEnabled =
       (process.env.NEXT_PUBLIC_AVAILABILITY_ENABLED ?? "true").toLowerCase() !== "false";
 
-    // 1) Chevauchement avec booking existant (non annulé)
-    // overlap si: start < existing_end AND end > existing_start
+    // 1) Overlap booking existant
     const { data: overlaps, error: ovErr } = await admin
       .from("bookings")
       .select("id,status,start_time,end_time")
@@ -278,7 +282,7 @@ export async function POST(req: Request) {
     }
 
     if (availabilityEnabled) {
-      // 2) Blackouts (indisponibilités ponctuelles)
+      // 2) Blackouts
       const { data: blackouts, error: boErr } = await admin
         .from("parking_blackouts")
         .select("id,start_at,end_at")
@@ -301,7 +305,7 @@ export async function POST(req: Request) {
         );
       }
 
-      // 3) Planning hebdo (fallback si aucun slot)
+      // 3) Planning hebdo ✅ NOUVELLE REGLE
       const { data: slots, error: slErr } = await admin
         .from("parking_availability")
         .select("weekday,start_time,end_time,enabled")
@@ -309,19 +313,22 @@ export async function POST(req: Request) {
 
       if (slErr) return NextResponse.json({ ok: false, error: slErr.message }, { status: 500 });
 
-      const slotRows = ((slots ?? []) as AvailabilityRow[]).filter((s) => s && typeof s.weekday === "number");
+      const slotRows = ((slots ?? []) as AvailabilityRow[]).filter(
+        (s) => s && typeof s.weekday === "number"
+      );
 
-      const hasAnyPlanning = slotRows.some((s) => isEnabledAvailability(s));
+      // ✅ Si aucune ligne => fallback legacy (réservable)
+      // ✅ Si au moins 1 ligne (même OFF) => planning en place => doit être couvert par un slot enabled
+      const hasPlanning = slotRows.length > 0;
 
-      // ✅ fallback : pas de planning => on ne bloque pas (comportement legacy)
-      if (hasAnyPlanning) {
+      if (hasPlanning) {
         const covered = isBookingCoveredByAvailability(startTime, endTime, slotRows);
         if (!covered) {
           return NextResponse.json(
             {
               ok: false,
               error: "Créneau indisponible",
-              detail: "La réservation est hors des horaires définis par le propriétaire.",
+              detail: "Fermé / hors horaires définis par le propriétaire.",
               code: "OUTSIDE_AVAILABILITY",
             },
             { status: 409 }
@@ -352,7 +359,7 @@ export async function POST(req: Request) {
     if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
     if (!b) return NextResponse.json({ ok: false, error: "Insert booking failed" }, { status: 500 });
 
-    // Fetch emails (owner + client)
+    // Fetch emails
     const [ownerRes, clientRes] = await Promise.all([
       admin.auth.admin.getUserById(ownerId),
       admin.auth.admin.getUserById(clientId),
@@ -364,7 +371,6 @@ export async function POST(req: Request) {
     const appUrl = getAppUrl();
     const from = getFromEmail();
 
-    // Send emails (best effort)
     const emailJobs: Array<Promise<unknown>> = [];
 
     if (ownerEmail) {
