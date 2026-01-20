@@ -107,6 +107,10 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
     setLoading(true);
     setErr(null);
     setOkMsg(null);
+if (!parkingId || parkingId === "undefined") {
+  setErr("parkingId manquant (place non chargée)");
+  return;
+}
 
     const url = `/api/owner/availability/get?parkingId=${encodeURIComponent(parkingId)}`;
     const res = await fetch(url, { headers: authHeader });
@@ -157,6 +161,10 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
     }
 
     setSaving(true);
+if (!parkingId || parkingId === "undefined") {
+  setErr("parkingId manquant (place non chargée)");
+  return;
+}
 
     const res = await fetch("/api/owner/availability/upsert", {
       method: "POST",
