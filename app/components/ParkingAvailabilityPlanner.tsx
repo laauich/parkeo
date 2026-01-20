@@ -8,7 +8,7 @@ import { UI } from "@/app/components/ui";
 
 type Slot = {
   weekday: number; // 1..7
-  start_time: string; // "HH:MM"
+  start_time: string; // "HH:MM" (UI) - API peut renvoyer "HH:MM:SS"
   end_time: string; // "HH:MM"
   enabled: boolean;
 };
@@ -24,7 +24,33 @@ const DAYS: Array<{ weekday: number; label: string; short: string }> = [
 ];
 
 function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
+}
+
+// ✅ Normalise "HH:MM:SS" -> "HH:MM"
+function toHHMM(t: string) {
+  const s = String(t ?? "").trim();
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s.slice(0, 5);
+  return "08:00";
+}
+
+// ✅ accepte HH:MM ou HH:MM:SS
+function isTime(v: string) {
+  const s = String(v ?? "").trim();
+  return /^\d{2}:\d{2}$/.test(s) || /^\d{2}:\d{2}:\d{2}$/.test(s);
+}
+
+// ✅ compare en minutes (tolère HH:MM:SS)
+function minutesOf(t: string) {
+  const s = String(t ?? "").trim();
+  const [hh, mm] = s.split(":");
+  const h = Number(hh ?? "0");
+  const m = Number(mm ?? "0");
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return NaN;
+  return h * 60 + m;
 }
 
 function defaultSlots(): Slot[] {
@@ -63,17 +89,15 @@ function presetAllDay(): Slot[] {
   }));
 }
 
-function isTimeHHMM(v: string) {
-  return /^\d{2}:\d{2}$/.test(v);
-}
-
 function normalizeSlotsFromApi(apiSlots: Slot[]): Slot[] {
   const map = new Map<number, Slot>();
+
   for (const s of apiSlots ?? []) {
     map.set(s.weekday, {
       weekday: s.weekday,
-      start_time: s.start_time,
-      end_time: s.end_time,
+      // ✅ normalisation au chargement
+      start_time: toHHMM(s.start_time),
+      end_time: toHHMM(s.end_time),
       enabled: Boolean(s.enabled),
     });
   }
@@ -107,7 +131,20 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
   const parkingReady = useMemo(() => isUuid(parkingIdSafe), [parkingIdSafe]);
 
   const setSlot = (weekday: number, patch: Partial<Slot>) => {
-    setSlots((prev) => prev.map((s) => (s.weekday === weekday ? { ...s, ...patch, weekday } : s)));
+    setSlots((prev) =>
+      prev.map((s) =>
+        s.weekday === weekday
+          ? {
+              ...s,
+              ...patch,
+              weekday,
+              // ✅ on garde l’UI propre en HH:MM
+              start_time: patch.start_time !== undefined ? toHHMM(patch.start_time) : s.start_time,
+              end_time: patch.end_time !== undefined ? toHHMM(patch.end_time) : s.end_time,
+            }
+          : s
+      )
+    );
   };
 
   const copyToAll = (weekday: number) => {
@@ -126,8 +163,16 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
   const validate = (): string | null => {
     for (const s of slots) {
       if (s.weekday < 1 || s.weekday > 7) return "weekday invalide";
-      if (!isTimeHHMM(s.start_time) || !isTimeHHMM(s.end_time)) return "Heures invalides.";
-      if (s.enabled && s.end_time <= s.start_time) return "end_time doit être après start_time";
+
+      // ✅ tolère HH:MM:SS (au cas où)
+      if (!isTime(s.start_time) || !isTime(s.end_time)) return "Heures invalides.";
+
+      if (s.enabled) {
+        const a = minutesOf(s.start_time);
+        const b = minutesOf(s.end_time);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) return "Heures invalides.";
+        if (b <= a) return "end_time doit être après start_time";
+      }
     }
     return null;
   };
@@ -186,10 +231,17 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
     setSaving(true);
 
     try {
+      // ✅ On envoie toujours en HH:MM (clean)
+      const payloadSlots = slots.map((s) => ({
+        ...s,
+        start_time: toHHMM(s.start_time),
+        end_time: toHHMM(s.end_time),
+      }));
+
       const res = await fetch("/api/owner/availability/upsert", {
         method: "POST",
         headers: { ...authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify({ parkingId: parkingIdSafe, slots }),
+        body: JSON.stringify({ parkingId: parkingIdSafe, slots: payloadSlots }),
       });
 
       const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
@@ -203,7 +255,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
       setOkMsg("✅ Planning enregistré !");
       setSaving(false);
 
-      // ✅ REDIRECTION COMME AVANT
+      // ✅ REDIRECTION
       router.push("/my-parkings");
       router.refresh();
     } catch (e: unknown) {
@@ -354,9 +406,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
                     style={{ width: s.enabled ? "100%" : "25%" }}
                   />
                 </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  {s.enabled ? `${s.start_time} → ${s.end_time}` : "Désactivé"}
-                </div>
+                <div className="mt-1 text-xs text-slate-500">{s.enabled ? `${s.start_time} → ${s.end_time}` : "Désactivé"}</div>
               </div>
             </div>
           );
