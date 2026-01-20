@@ -55,7 +55,6 @@ function normalizeRows(input: unknown): ParkingRow[] {
 }
 
 function sameRow(a: ParkingRow, b: ParkingRow) {
-  // comparaison “cheap” suffisante pour éviter flicker
   return (
     a.id === b.id &&
     a.title === b.title &&
@@ -107,6 +106,50 @@ function extractReason(json: unknown): string | undefined {
   return reason || detail || error || undefined;
 }
 
+function normalizeReason(r?: string) {
+  const s = (r ?? "").trim();
+  return s || "Fermé / hors horaires du propriétaire";
+}
+
+function labelFromReason(r?: string) {
+  const s = normalizeReason(r).toLowerCase();
+  if (s.includes("blackout")) return "Blackout";
+  if (s.includes("réserv")) return "Déjà réservé";
+  if (s.includes("désactiv")) return "Désactivée";
+  if (s.includes("hors horaires") || s.includes("ferm")) return "Hors horaires";
+  return "Indisponible";
+}
+
+/**
+ * ✅ Fenêtre de check "intelligente" (UX)
+ * - avant 08:00 => 08:00–09:00
+ * - entre 08:00 et 18:00 => prochaine heure pleine (ex: 14:00–15:00)
+ * - après 18:00 => demain 08:00–09:00
+ *
+ * Note: on utilise l'heure locale du navigateur (Europe/Paris ≈ Europe/Zurich).
+ */
+function computeAvailabilityWindow() {
+  const now = new Date();
+
+  // base = prochaine heure pleine
+  const start = new Date(now);
+  start.setMinutes(0, 0, 0);
+  start.setHours(start.getHours() + 1);
+
+  const hour = start.getHours();
+
+  // clamp dans une plage "raisonnable" (08–18)
+  if (hour < 8) {
+    start.setHours(8, 0, 0, 0);
+  } else if (hour >= 18) {
+    start.setDate(start.getDate() + 1);
+    start.setHours(8, 0, 0, 0);
+  }
+
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
 export default function ParkingsClient({
   initialRows,
 }: {
@@ -118,7 +161,6 @@ export default function ParkingsClient({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // “mis à jour”
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   // Filters
@@ -129,15 +171,14 @@ export default function ParkingsClient({
   const [lit, setLit] = useState(false);
   const [ev, setEv] = useState(false);
 
-  // éviter double fetch en React StrictMode (dev)
   const didMountRef = useRef(false);
 
-  // ✅ Disponibilité “now → +1h” par parkingId
+  // ✅ Disponibilité par parkingId
   const [availabilityById, setAvailabilityById] = useState<
     Record<string, AvState>
   >({});
 
-  // ✅ garde un “runId” pour ignorer les vieux retours fetch
+  // ✅ runId pour ignorer vieux retours
   const runIdRef = useRef(0);
 
   const load = async (opts?: { silent?: boolean }) => {
@@ -174,7 +215,6 @@ export default function ParkingsClient({
     if (didMountRef.current) return;
     didMountRef.current = true;
 
-    // ✅ SWR-like : on affiche initialRows tout de suite puis refresh en arrière-plan
     void load({ silent: rows.length > 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -221,19 +261,18 @@ export default function ParkingsClient({
     return `Mis à jour à ${hh}:${mm}`;
   }, [lastUpdatedAt]);
 
-  // ✅ Check disponibilité “now → +1h” pour les cards visibles (filtered)
-  // => planning propriétaire + blackouts + overlaps + OFF global (car ton endpoint le gère)
+  // ✅ Check disponibilité pour les cards visibles (filtered)
   useEffect(() => {
     if (filtered.length === 0) return;
 
     runIdRef.current += 1;
     const myRunId = runIdRef.current;
 
-    // set "checking" pour ceux qui n'ont pas encore un state
+    // marquer "checking"
     setAvailabilityById((prev) => {
       const next: Record<string, AvState> = { ...prev };
       for (const p of filtered) {
-        if (!next[p.id]) next[p.id] = { state: "checking" };
+        next[p.id] = { state: "checking" };
       }
       return next;
     });
@@ -241,12 +280,8 @@ export default function ParkingsClient({
     const controller = new AbortController();
 
     const run = async () => {
-      const start = new Date();
-      const end = new Date(start.getTime() + 60 * 60 * 1000); // +1h
-      const startIso = start.toISOString();
-      const endIso = end.toISOString();
+      const { startIso, endIso } = computeAvailabilityWindow();
 
-      // limiter la charge
       const concurrency = 10;
       let idx = 0;
 
@@ -263,16 +298,11 @@ export default function ParkingsClient({
               endIso
             )}`;
 
-            const res = await fetch(url, {
-              signal: controller.signal,
-              cache: "no-store",
-            });
-
+            const res = await fetch(url, { signal: controller.signal });
             const json: AvailApiOk | AvailApiErr = await res
               .json()
               .catch(() => ({}));
 
-            // si un nouveau run a démarré, ignorer
             if (runIdRef.current !== myRunId) return;
 
             if (!res.ok) {
@@ -307,15 +337,13 @@ export default function ParkingsClient({
       };
 
       await Promise.all(
-        Array.from(
-          { length: Math.min(concurrency, filtered.length) },
-          () => worker()
+        Array.from({ length: Math.min(concurrency, filtered.length) }, () =>
+          worker()
         )
       );
     };
 
     void run();
-
     return () => controller.abort();
   }, [filtered]);
 
@@ -474,31 +502,10 @@ export default function ParkingsClient({
             {filtered.map((p) => {
               const photo = p.photos?.[0] ?? null;
 
-              const av: AvState =
-                availabilityById[p.id] ?? { state: "checking" };
-
-              const isUnavailable = av.state === "unavailable";
-              const isChecking = av.state === "checking";
-
-              // ✅ texte + style
-              const status =
-                av.state === "checking"
-                  ? { text: "Vérification…", cls: "text-slate-600" }
-                  : av.state === "available"
-                  ? { text: "Disponible", cls: "font-medium text-emerald-700" }
-                  : av.state === "unavailable"
-                  ? {
-                      text: av.reason
-                        ? `Indisponible — ${av.reason}`
-                        : "Indisponible",
-                      cls: "font-medium text-rose-700",
-                    }
-                  : av.state === "error"
-                  ? {
-                      text: "Disponibilité inconnue",
-                      cls: "font-medium text-amber-700",
-                    }
-                  : { text: "—", cls: "text-slate-500" };
+              const av = availabilityById[p.id] ?? { state: "checking" as const };
+              const unavailable = av.state === "unavailable";
+              const unavailableReason =
+                av.state === "unavailable" ? normalizeReason(av.reason) : "";
 
               return (
                 <Link
@@ -508,26 +515,26 @@ export default function ParkingsClient({
                     UI.card,
                     UI.cardHover,
                     "block overflow-hidden relative",
-                    isUnavailable ? "opacity-60 grayscale" : ""
+                    unavailable ? "opacity-60 grayscale" : ""
                   )}
                   title={
-                    isUnavailable
-                      ? av.reason || "Indisponible"
-                      : isChecking
+                    av.state === "unavailable"
+                      ? unavailableReason
+                      : av.state === "checking"
                       ? "Vérification disponibilité…"
                       : ""
                   }
                 >
-                  {/* ✅ badge ultra visible (même si la card est grisée) */}
-                  {isUnavailable ? (
+                  {/* Badge overlay très visible */}
+                  {av.state === "unavailable" ? (
                     <div className="absolute top-3 left-3 z-10">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg">
-                        ❌ Indisponible
+                      <span className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg">
+                        {labelFromReason(unavailableReason)}
                       </span>
                     </div>
                   ) : null}
 
-                  <div className="w-full h-40 bg-slate-100">
+                  <div className="w-full h-40 bg-slate-100 relative">
                     {photo ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -540,6 +547,15 @@ export default function ParkingsClient({
                         Aucune photo
                       </div>
                     )}
+
+                    {/* Bandeau bas sur photo (lisible même grisé) */}
+                    {av.state === "unavailable" ? (
+                      <div className="absolute inset-x-0 bottom-0 z-10">
+                        <div className="bg-rose-600/95 text-white text-xs font-semibold px-3 py-2">
+                          ❌ Indisponible — {unavailableReason}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className={UI.cardPad}>
@@ -583,30 +599,35 @@ export default function ParkingsClient({
                       ) : null}
                     </div>
 
-                    <div className="mt-4 flex items-center justify-between gap-2">
-                      {/* ✅ chip status en couleur vive (rose si indispo) */}
+                    <div className="mt-4 flex items-center justify-between">
                       <span
                         className={cx(
                           UI.chip,
-                          isUnavailable
-                            ? "bg-rose-100 text-rose-700 font-semibold"
-                            : av.state === "available"
-                            ? "bg-emerald-100 text-emerald-700 font-semibold"
-                            : status.cls
+                          av.state === "available"
+                            ? "font-medium text-emerald-700"
+                            : av.state === "unavailable"
+                            ? "font-medium text-rose-700"
+                            : av.state === "error"
+                            ? "font-medium text-amber-700"
+                            : "text-slate-600"
                         )}
                       >
-                        {status.text}
+                        {av.state === "checking"
+                          ? "Vérification…"
+                          : av.state === "available"
+                          ? "Disponible"
+                          : av.state === "unavailable"
+                          ? "Indisponible"
+                          : "Disponibilité inconnue"}
                       </span>
 
                       <span
-                        className={[
+                        className={cx(
                           UI.btnBase,
                           UI.btnPrimary,
-                          "px-3 py-1.5 text-xs",
-                          "rounded-full",
-                          "pointer-events-none",
-                          isUnavailable ? "opacity-70" : "",
-                        ].join(" ")}
+                          "px-3 py-1.5 text-xs rounded-full pointer-events-none",
+                          unavailable ? "opacity-70" : ""
+                        )}
                       >
                         Détails
                       </span>
@@ -627,8 +648,9 @@ export default function ParkingsClient({
           </div>
 
           <div className="mt-4 text-xs text-slate-500">
-            * “Disponible / Indisponible” correspond à un check <b>maintenant → +1h</b>{" "}
-            (planning propriétaire, blackouts, réservations, OFF global).
+            * “Disponible / Indisponible” correspond à un check{" "}
+            <b>sur la prochaine heure exploitable</b> (planning propriétaire,
+            blackouts, réservations).
           </div>
         </section>
       </div>
