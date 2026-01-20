@@ -4,7 +4,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
-import { useRouter } from "next/navigation";
 
 type Slot = {
   weekday: number; // 1..7
@@ -91,10 +90,10 @@ function normalizeSlotsFromApi(apiSlots: Array<Partial<Slot>>): Slot[] {
     });
   }
 
-  // ✅ DECISION: si aucun planning en DB -> défaut UI (semaine ON)
+  // ✅ aucun planning en DB -> défaut UI
   if (map.size === 0) return defaultSlots();
 
-  // sinon: on complète les jours manquants en OFF
+  // sinon: jours manquants en OFF
   return DAYS.map((d) => {
     const found = map.get(d.weekday);
     return found
@@ -104,7 +103,6 @@ function normalizeSlotsFromApi(apiSlots: Array<Partial<Slot>>): Slot[] {
 }
 
 export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: string }) {
-  const router = useRouter();
   const { ready, session } = useAuth();
 
   const [slots, setSlots] = useState<Slot[]>(defaultSlots());
@@ -213,11 +211,6 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
       setOkMsg("✅ Planning enregistré !");
       setSaving(false);
 
-      // ✅ OPTION: rediriger automatiquement vers mes places
-      // router.push("/my-parkings");
-      // router.refresh();
-
-      // sinon on recharge juste
       await load();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Erreur enregistrement planning");
