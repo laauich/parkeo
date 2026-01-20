@@ -114,31 +114,28 @@ function normalizeReason(r?: string) {
 function labelFromReason(r?: string) {
   const s = normalizeReason(r).toLowerCase();
   if (s.includes("blackout")) return "Blackout";
-  if (s.includes("réserv")) return "Déjà réservé";
+  if (s.includes("réserv") || s.includes("deja reserv") || s.includes("déjà")) return "Déjà réservé";
   if (s.includes("désactiv")) return "Désactivée";
   if (s.includes("hors horaires") || s.includes("ferm")) return "Hors horaires";
   return "Indisponible";
 }
 
 /**
- * ✅ Fenêtre de check "intelligente" (UX)
+ * Fenêtre de check "Prochaine heure exploitable"
  * - avant 08:00 => 08:00–09:00
- * - entre 08:00 et 18:00 => prochaine heure pleine (ex: 14:00–15:00)
+ * - entre 08:00 et 18:00 => prochaine heure pleine
  * - après 18:00 => demain 08:00–09:00
- *
- * Note: on utilise l'heure locale du navigateur (Europe/Paris ≈ Europe/Zurich).
  */
-function computeAvailabilityWindow() {
+function computeNextUsefulWindow() {
   const now = new Date();
 
-  // base = prochaine heure pleine
+  // prochaine heure pleine
   const start = new Date(now);
   start.setMinutes(0, 0, 0);
   start.setHours(start.getHours() + 1);
 
   const hour = start.getHours();
 
-  // clamp dans une plage "raisonnable" (08–18)
   if (hour < 8) {
     start.setHours(8, 0, 0, 0);
   } else if (hour >= 18) {
@@ -147,7 +144,16 @@ function computeAvailabilityWindow() {
   }
 
   const end = new Date(start.getTime() + 60 * 60 * 1000);
-  return { startIso: start.toISOString(), endIso: end.toISOString() };
+  return { startIso: start.toISOString(), endIso: end.toISOString(), label: "prochaine heure exploitable" };
+}
+
+/**
+ * Fenêtre de check "Disponible maintenant"
+ */
+function computeNowWindow() {
+  const start = new Date();
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { startIso: start.toISOString(), endIso: end.toISOString(), label: "maintenant → +1h" };
 }
 
 export default function ParkingsClient({
@@ -170,6 +176,9 @@ export default function ParkingsClient({
   const [secure, setSecure] = useState(false);
   const [lit, setLit] = useState(false);
   const [ev, setEv] = useState(false);
+
+  // ✅ Toggle : dispo maintenant
+  const [availableNow, setAvailableNow] = useState(false);
 
   const didMountRef = useRef(false);
 
@@ -261,6 +270,10 @@ export default function ParkingsClient({
     return `Mis à jour à ${hh}:${mm}`;
   }, [lastUpdatedAt]);
 
+  const windowInfo = useMemo(() => {
+    return availableNow ? computeNowWindow() : computeNextUsefulWindow();
+  }, [availableNow]);
+
   // ✅ Check disponibilité pour les cards visibles (filtered)
   useEffect(() => {
     if (filtered.length === 0) return;
@@ -268,7 +281,7 @@ export default function ParkingsClient({
     runIdRef.current += 1;
     const myRunId = runIdRef.current;
 
-    // marquer "checking"
+    // marquer "checking" pour tout ce qui est affiché
     setAvailabilityById((prev) => {
       const next: Record<string, AvState> = { ...prev };
       for (const p of filtered) {
@@ -280,7 +293,7 @@ export default function ParkingsClient({
     const controller = new AbortController();
 
     const run = async () => {
-      const { startIso, endIso } = computeAvailabilityWindow();
+      const { startIso, endIso } = windowInfo;
 
       const concurrency = 10;
       let idx = 0;
@@ -345,7 +358,7 @@ export default function ParkingsClient({
 
     void run();
     return () => controller.abort();
-  }, [filtered]);
+  }, [filtered, windowInfo.startIso, windowInfo.endIso]);
 
   return (
     <main className={UI.page}>
@@ -427,7 +440,7 @@ export default function ParkingsClient({
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-4 flex flex-wrap gap-2 items-center">
             <button
               type="button"
               className={[UI.btnBase, secure ? UI.btnPrimary : UI.btnGhost].join(
@@ -457,6 +470,17 @@ export default function ParkingsClient({
             </button>
 
             <div className="flex-1" />
+
+            {/* ✅ Toggle dispo maintenant */}
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                className="accent-violet-600"
+                checked={availableNow}
+                onChange={(e) => setAvailableNow(e.target.checked)}
+              />
+              Disponible maintenant
+            </label>
 
             <button
               type="button"
@@ -648,9 +672,8 @@ export default function ParkingsClient({
           </div>
 
           <div className="mt-4 text-xs text-slate-500">
-            * “Disponible / Indisponible” correspond à un check{" "}
-            <b>sur la prochaine heure exploitable</b> (planning propriétaire,
-            blackouts, réservations).
+            * “Disponible / Indisponible” correspond à un check <b>{windowInfo.label}</b>{" "}
+            (planning propriétaire, blackouts, réservations).
           </div>
         </section>
       </div>
