@@ -176,9 +176,12 @@ export default function BookingForm({
     availability.state === "available" &&
     !loading;
 
+  // ✅ Griser si checking / unavailable / error (et uniquement si dates valides)
   const disabledCard =
-    (parsed.valid && availability.state === "checking") ||
-    (parsed.valid && availability.state === "unavailable");
+    parsed.valid &&
+    (availability.state === "checking" ||
+      availability.state === "unavailable" ||
+      availability.state === "error");
 
   const onPay = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -214,7 +217,12 @@ export default function BookingForm({
       if (!res1.ok) {
         // ✅ cas important: 409 = indisponible (planning, blackout, overlap, OFF)
         if (res1.status === 409) {
-          setError(mapBooking409ToUserMessage(j1));
+          const msg409 = mapBooking409ToUserMessage(j1);
+
+          // ✅ on force aussi l'état dispo en "unavailable" pour griser + badge
+          setAvailability({ state: "unavailable", reason: msg409 });
+
+          setError(msg409);
           setLoading(false);
           return;
         }
@@ -341,9 +349,7 @@ export default function BookingForm({
         <div className="space-y-2">
           <div className="flex flex-wrap justify-between gap-2 text-sm">
             <span className="text-slate-600">Estimation</span>
-            <span className="font-semibold text-slate-900">
-              {amountChf > 0 ? `${amountChf} CHF` : "—"}
-            </span>
+            <span className="font-semibold text-slate-900">{amountChf > 0 ? `${amountChf} CHF` : "—"}</span>
           </div>
 
           <div className="text-xs text-slate-500">
@@ -368,7 +374,7 @@ export default function BookingForm({
           ) : null}
 
           {/* ✅ label visuel */}
-          {parsed.valid && availability.state === "unavailable" ? (
+          {parsed.valid && (availability.state === "unavailable" || availability.state === "error") ? (
             <div className="pt-1 text-xs font-medium text-rose-700">Indisponible</div>
           ) : null}
         </div>
