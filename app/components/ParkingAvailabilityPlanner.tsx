@@ -1,7 +1,7 @@
+// app/components/ParkingAvailabilityPlanner.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 
@@ -11,6 +11,17 @@ type Slot = {
   end_time: string; // "HH:MM"
   enabled: boolean;
 };
+
+// ✅ Ce que renvoie l’API /api/owner/availability/get (souvent start_time/end_time = "HH:MM:SS")
+type SlotApi = {
+  weekday: number;
+  start_time: string;
+  end_time: string;
+  enabled: boolean;
+};
+
+type ApiOk = { ok: true; slots: SlotApi[] };
+type ApiErr = { ok: false; error: string };
 
 const DAYS: Array<{ weekday: number; label: string; short: string }> = [
   { weekday: 1, label: "Lundi", short: "Lun" },
@@ -23,7 +34,23 @@ const DAYS: Array<{ weekday: number; label: string; short: string }> = [
 ];
 
 function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
+}
+
+// ✅ Normalise "HH:MM:SS" -> "HH:MM"
+function toHHMM(t: unknown): string {
+  if (typeof t !== "string") return "08:00";
+  const s = t.trim();
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s.slice(0, 5);
+  return "08:00";
+}
+
+// ✅ Tolérant pour validation: HH:MM ou HH:MM:SS
+function isTimeOk(v: string) {
+  return /^\d{2}:\d{2}(:\d{2})?$/.test(v);
 }
 
 function defaultSlots(): Slot[] {
@@ -62,23 +89,25 @@ function presetAllDay(): Slot[] {
   }));
 }
 
-function isTimeHHMM(v: string) {
-  return /^\d{2}:\d{2}$/.test(v);
-}
-
-function normalizeSlotsFromApi(apiSlots: Slot[]): Slot[] {
+function normalizeSlotsFromApi(apiSlots: SlotApi[]): Slot[] {
   const map = new Map<number, Slot>();
+
   for (const s of apiSlots ?? []) {
-    map.set(s.weekday, {
-      weekday: s.weekday,
-      start_time: s.start_time,
-      end_time: s.end_time,
+    const wd = Number(s.weekday);
+    if (!Number.isFinite(wd)) continue;
+
+    map.set(wd, {
+      weekday: wd,
+      start_time: toHHMM(s.start_time),
+      end_time: toHHMM(s.end_time),
       enabled: Boolean(s.enabled),
     });
   }
 
+  // ✅ si rien en DB => defaults
   if (map.size === 0) return defaultSlots();
 
+  // ✅ Always return 7 days
   return DAYS.map((d) => {
     const found = map.get(d.weekday);
     return found
@@ -87,8 +116,21 @@ function normalizeSlotsFromApi(apiSlots: Slot[]): Slot[] {
   });
 }
 
+function isApiOk(x: unknown): x is ApiOk {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  if (o.ok !== true) return false;
+  if (!Array.isArray(o.slots)) return false;
+  return true;
+}
+
+function isApiErr(x: unknown): x is ApiErr {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return o.ok === false && typeof o.error === "string";
+}
+
 export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: string }) {
-  const router = useRouter();
   const { ready, session } = useAuth();
 
   const [slots, setSlots] = useState<Slot[]>(defaultSlots());
@@ -106,17 +148,30 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
   const parkingReady = useMemo(() => isUuid(parkingIdSafe), [parkingIdSafe]);
 
   const setSlot = (weekday: number, patch: Partial<Slot>) => {
-    setSlots((prev) => prev.map((s) => (s.weekday === weekday ? { ...s, ...patch, weekday } : s)));
+    setSlots((prev) =>
+      prev.map((s) =>
+        s.weekday === weekday
+          ? {
+              ...s,
+              ...patch,
+              weekday,
+              start_time: patch.start_time ? toHHMM(patch.start_time) : s.start_time,
+              end_time: patch.end_time ? toHHMM(patch.end_time) : s.end_time,
+            }
+          : s
+      )
+    );
   };
 
   const copyToAll = (weekday: number) => {
     const src = slots.find((s) => s.weekday === weekday);
     if (!src) return;
+
     setSlots((prev) =>
       prev.map((s) => ({
         ...s,
-        start_time: src.start_time,
-        end_time: src.end_time,
+        start_time: toHHMM(src.start_time),
+        end_time: toHHMM(src.end_time),
         enabled: src.enabled,
       }))
     );
@@ -125,15 +180,18 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
   const validate = (): string | null => {
     for (const s of slots) {
       if (s.weekday < 1 || s.weekday > 7) return "weekday invalide";
-      if (!isTimeHHMM(s.start_time) || !isTimeHHMM(s.end_time)) return "Heures invalides";
-      if (s.enabled && s.end_time <= s.start_time) return "end_time doit être après start_time";
+      if (!isTimeOk(s.start_time) || !isTimeOk(s.end_time)) return "Heures invalides.";
+
+      const st = toHHMM(s.start_time);
+      const en = toHHMM(s.end_time);
+
+      if (s.enabled && en <= st) return "end_time doit être après start_time";
     }
     return null;
   };
 
   const load = async () => {
     if (!authHeader) return;
-
     if (!parkingReady) {
       setErr(null);
       setOkMsg(null);
@@ -147,18 +205,28 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
     try {
       const url = `/api/owner/availability/get?parkingId=${encodeURIComponent(parkingIdSafe)}`;
       const res = await fetch(url, { headers: authHeader });
+      const json: unknown = await res.json().catch(() => ({}));
 
-      const json = (await res.json().catch(() => ({}))) as
-        | { ok: true; slots: Slot[] }
-        | { ok: false; error: string };
-
-      if (!res.ok || !("ok" in json) || json.ok === false) {
-        setErr("error" in json ? json.error : `Erreur (${res.status})`);
+      if (!res.ok) {
+        const msg = isApiErr(json) ? json.error : `Erreur (${res.status})`;
+        setErr(msg);
         setLoading(false);
         return;
       }
 
-      setSlots(normalizeSlotsFromApi(json.slots ?? []));
+      if (isApiOk(json)) {
+        setSlots(normalizeSlotsFromApi(json.slots ?? []));
+        setLoading(false);
+        return;
+      }
+
+      if (isApiErr(json)) {
+        setErr(json.error);
+        setLoading(false);
+        return;
+      }
+
+      setErr("Réponse API inattendue");
       setLoading(false);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Erreur chargement planning");
@@ -186,16 +254,44 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
     setSaving(true);
 
     try {
+      // ✅ on envoie toujours HH:MM
+      const payloadSlots: Slot[] = slots.map((s) => ({
+        weekday: s.weekday,
+        start_time: toHHMM(s.start_time),
+        end_time: toHHMM(s.end_time),
+        enabled: !!s.enabled,
+      }));
+
       const res = await fetch("/api/owner/availability/upsert", {
         method: "POST",
         headers: { ...authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify({ parkingId: parkingIdSafe, slots }),
+        body: JSON.stringify({ parkingId: parkingIdSafe, slots: payloadSlots }),
       });
 
-      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      const json: unknown = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg =
+          json && typeof json === "object" && "error" in (json as Record<string, unknown>) &&
+          typeof (json as Record<string, unknown>).error === "string"
+            ? String((json as Record<string, unknown>).error)
+            : `Erreur (${res.status})`;
+        setErr(msg);
+        setSaving(false);
+        return;
+      }
 
-      if (!res.ok || !json.ok) {
-        setErr(json.error ?? `Erreur (${res.status})`);
+      const ok =
+        json && typeof json === "object" && "ok" in (json as Record<string, unknown>)
+          ? Boolean((json as Record<string, unknown>).ok)
+          : false;
+
+      if (!ok) {
+        const msg =
+          json && typeof json === "object" && "error" in (json as Record<string, unknown>) &&
+          typeof (json as Record<string, unknown>).error === "string"
+            ? String((json as Record<string, unknown>).error)
+            : "Erreur enregistrement planning";
+        setErr(msg);
         setSaving(false);
         return;
       }
@@ -203,9 +299,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
       setOkMsg("✅ Planning enregistré !");
       setSaving(false);
 
-      // ✅ Redirect vers "Mes places"
-      router.push("/my-parkings");
-      router.refresh();
+      await load();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Erreur enregistrement planning");
       setSaving(false);
@@ -321,7 +415,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
                   <input
                     type="time"
                     className={UI.input}
-                    value={s.start_time}
+                    value={toHHMM(s.start_time)}
                     onChange={(e) => setSlot(d.weekday, { start_time: e.target.value })}
                     disabled={!s.enabled}
                   />
@@ -334,7 +428,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
                   <input
                     type="time"
                     className={UI.input}
-                    value={s.end_time}
+                    value={toHHMM(s.end_time)}
                     onChange={(e) => setSlot(d.weekday, { end_time: e.target.value })}
                     disabled={!s.enabled}
                   />
@@ -355,7 +449,7 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
                   />
                 </div>
                 <div className="mt-1 text-xs text-slate-500">
-                  {s.enabled ? `${s.start_time} → ${s.end_time}` : "Désactivé"}
+                  {s.enabled ? `${toHHMM(s.start_time)} → ${toHHMM(s.end_time)}` : "Désactivé"}
                 </div>
               </div>
             </div>
