@@ -84,6 +84,29 @@ function sameList(a: ParkingRow[], b: ParkingRow[]) {
   return true;
 }
 
+function cx(...s: Array<string | false | null | undefined>) {
+  return s.filter(Boolean).join(" ");
+}
+
+type AvState =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "available" }
+  | { state: "unavailable"; reason?: string }
+  | { state: "error"; message: string };
+
+type AvailApiOk = { available: boolean; reason?: string };
+type AvailApiErr = { error?: string; detail?: string; reason?: string };
+
+function extractReason(json: unknown): string | undefined {
+  if (!json || typeof json !== "object") return undefined;
+  const o = json as Record<string, unknown>;
+  const reason = typeof o.reason === "string" ? o.reason : undefined;
+  const detail = typeof o.detail === "string" ? o.detail : undefined;
+  const error = typeof o.error === "string" ? o.error : undefined;
+  return reason || detail || error || undefined;
+}
+
 export default function ParkingsClient({
   initialRows,
 }: {
@@ -109,12 +132,18 @@ export default function ParkingsClient({
   // éviter double fetch en React StrictMode (dev)
   const didMountRef = useRef(false);
 
+  // ✅ Disponibilité “now → +1h” par parkingId
+  const [availabilityById, setAvailabilityById] = useState<
+    Record<string, AvState>
+  >({});
+
+  // ✅ garde un “runId” pour ignorer les vieux retours fetch
+  const runIdRef = useRef(0);
+
   const load = async (opts?: { silent?: boolean }) => {
     const silent = !!opts?.silent;
 
-    if (!silent) {
-      setLoading(true);
-    }
+    if (!silent) setLoading(true);
     setError(null);
 
     try {
@@ -134,9 +163,8 @@ export default function ParkingsClient({
       setRows((prev) => (sameList(prev, next) ? prev : next));
       setLastUpdatedAt(Date.now());
     } catch (e: unknown) {
-      // ⚠️ si on a déjà des rows (SSR), on garde l’UI et on affiche l’erreur
       setError(e instanceof Error ? e.message : "Erreur inconnue");
-      setRows((prev) => prev); // no-op
+      setRows((prev) => prev);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -146,7 +174,7 @@ export default function ParkingsClient({
     if (didMountRef.current) return;
     didMountRef.current = true;
 
-    // ✅ SWR-like : on affiche initialRows tout de suite puis on refresh en arrière-plan
+    // ✅ SWR-like : on affiche initialRows tout de suite puis refresh en arrière-plan
     void load({ silent: rows.length > 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -192,6 +220,99 @@ export default function ParkingsClient({
     const mm = String(d.getMinutes()).padStart(2, "0");
     return `Mis à jour à ${hh}:${mm}`;
   }, [lastUpdatedAt]);
+
+  // ✅ Check disponibilité “now → +1h” pour les cards visibles (filtered)
+  useEffect(() => {
+    if (filtered.length === 0) return;
+
+    runIdRef.current += 1;
+    const myRunId = runIdRef.current;
+
+    // set "checking" pour ceux qui n'ont pas encore un state
+    setAvailabilityById((prev) => {
+      const next = { ...prev };
+      for (const p of filtered) {
+        if (!next[p.id]) next[p.id] = { state: "checking" };
+      }
+      return next;
+    });
+
+    const controller = new AbortController();
+
+    const run = async () => {
+      const start = new Date();
+      const end = new Date(start.getTime() + 60 * 60 * 1000); // +1h
+      const startIso = start.toISOString();
+      const endIso = end.toISOString();
+
+      // limiter la charge
+      const concurrency = 10;
+      let idx = 0;
+
+      const worker = async () => {
+        while (idx < filtered.length) {
+          const i = idx++;
+          const p = filtered[i];
+          if (!p) continue;
+
+          try {
+            const url = `/api/bookings/availability?parkingId=${encodeURIComponent(
+              p.id
+            )}&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(
+              endIso
+            )}`;
+
+            const res = await fetch(url, { signal: controller.signal });
+            const json: AvailApiOk | AvailApiErr = await res
+              .json()
+              .catch(() => ({}));
+
+            // si un nouveau run a démarré, ignorer
+            if (runIdRef.current !== myRunId) return;
+
+            if (!res.ok) {
+              const msg =
+                extractReason(json) ?? `Erreur disponibilité (${res.status})`;
+              setAvailabilityById((prev) => ({
+                ...prev,
+                [p.id]: { state: "error", message: msg },
+              }));
+              continue;
+            }
+
+            const ok = json as AvailApiOk;
+
+            setAvailabilityById((prev) => ({
+              ...prev,
+              [p.id]: ok.available
+                ? { state: "available" }
+                : { state: "unavailable", reason: ok.reason },
+            }));
+          } catch (e: unknown) {
+            if (e instanceof DOMException && e.name === "AbortError") return;
+            if (runIdRef.current !== myRunId) return;
+
+            const msg = e instanceof Error ? e.message : "Erreur inconnue";
+            setAvailabilityById((prev) => ({
+              ...prev,
+              [p.id]: { state: "error", message: msg },
+            }));
+          }
+        }
+      };
+
+      await Promise.all(
+        Array.from(
+          { length: Math.min(concurrency, filtered.length) },
+          () => worker()
+        )
+      );
+    };
+
+    void run();
+
+    return () => controller.abort();
+  }, [filtered]);
 
   return (
     <main className={UI.page}>
@@ -348,13 +469,43 @@ export default function ParkingsClient({
             {filtered.map((p) => {
               const photo = p.photos?.[0] ?? null;
 
+              const av = availabilityById[p.id] ?? { state: "checking" as const };
+
+              const unavailable = av.state === "unavailable";
+
+              const status =
+                av.state === "checking"
+                  ? { text: "Vérification…", cls: "text-slate-600" }
+                  : av.state === "available"
+                  ? { text: "Disponible", cls: "font-medium text-emerald-700" }
+                  : av.state === "unavailable"
+                  ? {
+                      text: av.reason
+                        ? `Indisponible — ${av.reason}`
+                        : "Indisponible",
+                      cls: "font-medium text-rose-700",
+                    }
+                  : av.state === "error"
+                  ? { text: "Disponibilité inconnue", cls: "font-medium text-amber-700" }
+                  : { text: "—", cls: "text-slate-500" };
+
               return (
                 <Link
                   key={p.id}
                   href={`/parkings/${p.id}`}
-                  className={[UI.card, UI.cardHover, "block overflow-hidden"].join(
-                    " "
+                  className={cx(
+                    UI.card,
+                    UI.cardHover,
+                    "block overflow-hidden",
+                    unavailable ? "opacity-60 grayscale" : ""
                   )}
+                  title={
+                    av.state === "unavailable"
+                      ? av.reason || "Indisponible"
+                      : av.state === "checking"
+                      ? "Vérification disponibilité…"
+                      : ""
+                  }
                 >
                   <div className="w-full h-40 bg-slate-100">
                     {photo ? (
@@ -413,21 +564,21 @@ export default function ParkingsClient({
                     </div>
 
                     <div className="mt-4 flex items-center justify-between">
-  <span className={UI.chip}>Disponible</span>
+                      <span className={cx(UI.chip, status.cls)}>{status.text}</span>
 
-  <span
-    className={[
-      UI.btnBase,
-      UI.btnPrimary,
-      "px-3 py-1.5 text-xs",
-      "rounded-full",
-      "pointer-events-none", // important car la card entière est cliquable
-    ].join(" ")}
-  >
-    Détails
-  </span>
-</div>
-
+                      <span
+                        className={[
+                          UI.btnBase,
+                          UI.btnPrimary,
+                          "px-3 py-1.5 text-xs",
+                          "rounded-full",
+                          "pointer-events-none",
+                          unavailable ? "opacity-70" : "",
+                        ].join(" ")}
+                      >
+                        Détails
+                      </span>
+                    </div>
                   </div>
                 </Link>
               );
@@ -441,6 +592,10 @@ export default function ParkingsClient({
                 </p>
               </div>
             ) : null}
+          </div>
+
+          <div className="mt-4 text-xs text-slate-500">
+            * “Disponible / Indisponible” correspond à un check <b>maintenant → +1h</b> (planning propriétaire, blackouts, réservations).
           </div>
         </section>
       </div>
