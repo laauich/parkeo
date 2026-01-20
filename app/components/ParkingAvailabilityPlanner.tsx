@@ -1,7 +1,7 @@
-// app/components/ParkingAvailabilityPlanner.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 
@@ -88,6 +88,7 @@ function normalizeSlotsFromApi(apiSlots: Slot[]): Slot[] {
 }
 
 export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: string }) {
+  const router = useRouter();
   const { ready, session } = useAuth();
 
   const [slots, setSlots] = useState<Slot[]>(defaultSlots());
@@ -132,21 +133,16 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
 
   const load = async () => {
     if (!authHeader) return;
+
     if (!parkingReady) {
-      // pas une erreur bloquante : l'id n'est juste pas encore prêt
       setErr(null);
       setOkMsg(null);
       return;
-     }
+    }
+
     setLoading(true);
     setErr(null);
     setOkMsg(null);
-
-if (!parkingId || !isUuid(parkingId)) {
-  setErr("parkingId invalide (place non chargée)");
-  setLoading(false); // dans load()
-  return;
-}
 
     try {
       const url = `/api/owner/availability/get?parkingId=${encodeURIComponent(parkingIdSafe)}`;
@@ -188,11 +184,6 @@ if (!parkingId || !isUuid(parkingId)) {
     }
 
     setSaving(true);
-if (!parkingId || !isUuid(parkingId)) {
-  setErr("parkingId invalide (place non chargée)");
-  setSaving(false);
-  return;
-}
 
     try {
       const res = await fetch("/api/owner/availability/upsert", {
@@ -211,6 +202,10 @@ if (!parkingId || !isUuid(parkingId)) {
 
       setOkMsg("✅ Planning enregistré !");
       setSaving(false);
+
+      // ✅ Redirect vers "Mes places"
+      router.push("/my-parkings");
+      router.refresh();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Erreur enregistrement planning");
       setSaving(false);
@@ -218,12 +213,11 @@ if (!parkingId || !isUuid(parkingId)) {
   };
 
   useEffect(() => {
-  if (!ready || !session || !authHeader) return;
-  if (!parkingId || !isUuid(parkingId)) return; // ✅ stop net
-  queueMicrotask(() => void load());
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [ready, session?.user?.id, parkingId]);
-
+    if (!ready || !session || !authHeader) return;
+    if (!parkingId || !isUuid(parkingId)) return;
+    queueMicrotask(() => void load());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, session?.user?.id, parkingId]);
 
   const enabledCount = useMemo(() => slots.filter((s) => s.enabled).length, [slots]);
 
