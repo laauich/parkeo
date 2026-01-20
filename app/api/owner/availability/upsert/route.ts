@@ -17,10 +17,6 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
-function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-}
-
 type Slot = {
   weekday: number; // 1..7
   start_time: string; // "HH:MM" or "HH:MM:SS"
@@ -49,11 +45,14 @@ export async function POST(req: Request) {
 
     const body = (await req.json().catch(() => ({}))) as Body;
 
-    const parkingIdRaw = (body.parkingId ?? "").trim();
+    const parkingIdRaw = String(body.parkingId ?? "").trim();
 
-    // ✅ FIX IMPORTANT: refuse "undefined"
-    if (!parkingIdRaw || parkingIdRaw === "undefined" || !isUuid(parkingIdRaw)) {
-      return NextResponse.json({ ok: false, error: "parkingId invalide" }, { status: 400 });
+    // ✅ Validation "soft" : on bloque seulement les valeurs vides / mauvaises évidentes
+    if (!parkingIdRaw || parkingIdRaw === "undefined" || parkingIdRaw === "null") {
+      return NextResponse.json(
+        { ok: false, error: "parkingId manquant", detail: `reçu="${parkingIdRaw}"` },
+        { status: 400 }
+      );
     }
 
     const slots = Array.isArray(body.slots) ? body.slots : [];
@@ -94,17 +93,17 @@ export async function POST(req: Request) {
       .eq("id", parkingIdRaw)
       .maybeSingle();
 
-    if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
+    // Si parkingIdRaw n'est pas un uuid valide, Postgres peut renvoyer une erreur ici :
+    // => on la remonte avec detail pour debug
+    if (pErr) return NextResponse.json({ ok: false, error: "DB error", detail: pErr.message }, { status: 500 });
+
     if (!p) return NextResponse.json({ ok: false, error: "Parking introuvable" }, { status: 404 });
     if ((p as { owner_id: string }).owner_id !== userId) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     }
 
     // ✅ Strategy simple & safe: on remplace tout
-    const { error: delErr } = await admin
-      .from("parking_availability")
-      .delete()
-      .eq("parking_id", parkingIdRaw);
+    const { error: delErr } = await admin.from("parking_availability").delete().eq("parking_id", parkingIdRaw);
 
     if (delErr) return NextResponse.json({ ok: false, error: delErr.message }, { status: 500 });
 

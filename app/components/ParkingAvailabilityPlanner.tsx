@@ -1,4 +1,3 @@
-// app/components/ParkingAvailabilityPlanner.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -62,6 +61,17 @@ function isTimeHHMM(v: string) {
   return /^\d{2}:\d{2}$/.test(v);
 }
 
+function isValidParkingId(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  const s = v.trim();
+  if (!s) return false;
+  if (s === "undefined" || s === "null") return false;
+  return true;
+}
+
+type GetRespOk = { ok: true; slots: Slot[] };
+type RespErr = { ok: false; error: string; detail?: string };
+
 export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: string }) {
   const { ready, session } = useAuth();
 
@@ -104,53 +114,66 @@ export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: s
 
   const load = async () => {
     if (!authHeader) return;
+
+    // ✅ IMPORTANT: guard AVANT setLoading(true)
+    if (!isValidParkingId(parkingId)) {
+      setErr(`parkingId manquant (reçu="${String(parkingId)}")`);
+      return;
+    }
+
     setLoading(true);
     setErr(null);
     setOkMsg(null);
-if (!parkingId || parkingId === "undefined") {
-  setErr("parkingId manquant (place non chargée)");
-  return;
-}
 
-    const url = `/api/owner/availability/get?parkingId=${encodeURIComponent(parkingId)}`;
-    const res = await fetch(url, { headers: authHeader });
+    try {
+      const url = `/api/owner/availability/get?parkingId=${encodeURIComponent(parkingId.trim())}`;
+      const res = await fetch(url, { headers: authHeader });
 
-    const json = (await res.json().catch(() => ({}))) as
-      | { ok: true; slots: Slot[] }
-      | { ok: false; error: string };
+      const jsonUnknown: unknown = await res.json().catch(() => ({} as unknown));
+      const json = jsonUnknown as GetRespOk | RespErr;
 
-    setLoading(false);
+      if (!res.ok || !("ok" in json) || json.ok === false) {
+        const msg = "error" in json ? json.error : `Erreur (${res.status})`;
+        const detail = "detail" in json ? json.detail : undefined;
+        setErr(detail ? `${msg} — ${detail}` : msg);
+        return;
+      }
 
-    if (!res.ok || !("ok" in json) || json.ok === false) {
-      setErr("error" in json ? json.error : `Erreur (${res.status})`);
-      return;
+      const map = new Map<number, Slot>();
+      for (const s of json.slots ?? []) map.set(s.weekday, s);
+
+      if (map.size === 0) {
+        setSlots(defaultSlots());
+        return;
+      }
+
+      setSlots(
+        DAYS.map((d) => {
+          const found = map.get(d.weekday);
+          return found
+            ? {
+                weekday: d.weekday,
+                start_time: found.start_time,
+                end_time: found.end_time,
+                enabled: Boolean(found.enabled),
+              }
+            : { weekday: d.weekday, start_time: "08:00", end_time: "18:00", enabled: false };
+        })
+      );
+    } finally {
+      setLoading(false);
     }
-
-    const map = new Map<number, Slot>();
-    for (const s of json.slots ?? []) map.set(s.weekday, s);
-
-    if (map.size === 0) {
-      setSlots(defaultSlots());
-      return;
-    }
-
-    setSlots(
-      DAYS.map((d) => {
-        const found = map.get(d.weekday);
-        return found
-          ? {
-              weekday: d.weekday,
-              start_time: found.start_time,
-              end_time: found.end_time,
-              enabled: Boolean(found.enabled),
-            }
-          : { weekday: d.weekday, start_time: "08:00", end_time: "18:00", enabled: false };
-      })
-    );
   };
 
   const save = async () => {
     if (!authHeader) return;
+
+    // ✅ IMPORTANT: guard AVANT setSaving(true)
+    if (!isValidParkingId(parkingId)) {
+      setErr(`parkingId manquant (reçu="${String(parkingId)}")`);
+      return;
+    }
+
     setErr(null);
     setOkMsg(null);
 
@@ -161,44 +184,44 @@ if (!parkingId || parkingId === "undefined") {
     }
 
     setSaving(true);
-if (!parkingId || parkingId === "undefined") {
-  setErr("parkingId manquant (place non chargée)");
-  return;
-}
 
-    const res = await fetch("/api/owner/availability/upsert", {
-      method: "POST",
-      headers: { ...authHeader, "Content-Type": "application/json" },
-      body: JSON.stringify({ parkingId, slots }),
-    });
+    try {
+      const res = await fetch("/api/owner/availability/upsert", {
+        method: "POST",
+        headers: { ...authHeader, "Content-Type": "application/json" },
+        body: JSON.stringify({ parkingId: parkingId.trim(), slots }),
+      });
 
-    const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      const jsonUnknown: unknown = await res.json().catch(() => ({} as unknown));
+      const json = jsonUnknown as { ok?: boolean; error?: string; detail?: string };
 
-    setSaving(false);
+      if (!res.ok || !json.ok) {
+        const msg = json.error ?? `Erreur (${res.status})`;
+        const detail = json.detail;
+        setErr(detail ? `${msg} — ${detail}` : msg);
+        return;
+      }
 
-    if (!res.ok || !json.ok) {
-      setErr(json.error ?? `Erreur (${res.status})`);
-      return;
+      setOkMsg("✅ Planning enregistré !");
+    } finally {
+      setSaving(false);
     }
-
-    setOkMsg("✅ Planning enregistré !");
   };
 
   useEffect(() => {
     if (!ready || !session || !authHeader) return;
+
+    // si parkingId est invalide, on ne spam pas l'API
+    if (!isValidParkingId(parkingId)) return;
+
     queueMicrotask(() => void load());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, session?.user?.id, parkingId]);
 
   const enabledCount = useMemo(() => slots.filter((s) => s.enabled).length, [slots]);
 
-  if (!ready) {
-    return <p className={UI.p}>Chargement…</p>;
-  }
-
-  if (!session) {
-    return <p className={UI.p}>Tu dois être connecté.</p>;
-  }
+  if (!ready) return <p className={UI.p}>Chargement…</p>;
+  if (!session) return <p className={UI.p}>Tu dois être connecté.</p>;
 
   return (
     <div className="space-y-4">
@@ -218,7 +241,9 @@ if (!parkingId || parkingId === "undefined") {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex flex-wrap gap-2">
-          <span className={UI.chip}>Jours actifs : <b>{enabledCount}/7</b></span>
+          <span className={UI.chip}>
+            Jours actifs : <b>{enabledCount}/7</b>
+          </span>
           <span className={UI.chip}>Optionnel (fallback si vide)</span>
         </div>
 
@@ -237,12 +262,13 @@ if (!parkingId || parkingId === "undefined") {
 
       <div className="grid gap-3">
         {DAYS.map((d) => {
-          const s = slots.find((x) => x.weekday === d.weekday) ?? {
-            weekday: d.weekday,
-            start_time: "08:00",
-            end_time: "18:00",
-            enabled: false,
-          };
+          const s =
+            slots.find((x) => x.weekday === d.weekday) ?? ({
+              weekday: d.weekday,
+              start_time: "08:00",
+              end_time: "18:00",
+              enabled: false,
+            } satisfies Slot);
 
           return (
             <div
