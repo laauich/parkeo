@@ -154,11 +154,21 @@ function computeNextUsefulWindow() {
 function computeNowWindow() {
   const start = new Date();
   const end = new Date(start.getTime() + 60 * 60 * 1000);
-  return { startIso: start.toISOString(), endIso: end.toISOString(), label: "maintenant → +1h" };
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    label: "maintenant → +1h",
+  };
 }
 
-export default function ParkingsClient({ initialRows }: { initialRows?: ParkingRow[] }) {
-  const [rows, setRows] = useState<ParkingRow[]>(normalizeRows(initialRows) ?? []);
+export default function ParkingsClient({
+  initialRows,
+}: {
+  initialRows?: ParkingRow[];
+}) {
+  const [rows, setRows] = useState<ParkingRow[]>(
+    normalizeRows(initialRows) ?? []
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -178,7 +188,9 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
   const didMountRef = useRef(false);
 
   // Dispo par id
-  const [availabilityById, setAvailabilityById] = useState<Record<string, AvState>>({});
+  const [availabilityById, setAvailabilityById] = useState<
+    Record<string, AvState>
+  >({});
 
   // runId anti-retours obsolètes
   const runIdRef = useRef(0);
@@ -248,7 +260,8 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
   }, [rows, q, type, covered, secure, lit, ev]);
 
   const onTypeChange = (v: string) => {
-    if (v === "all" || v === "outdoor" || v === "indoor" || v === "garage") setType(v);
+    if (v === "all" || v === "outdoor" || v === "indoor" || v === "garage")
+      setType(v);
   };
 
   const updatedLabel = useMemo(() => {
@@ -259,8 +272,8 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
     return `Mis à jour à ${hh}:${mm}`;
   }, [lastUpdatedAt]);
 
-  // ✅ windowInfo stable via memo (et on dépendra de startIso/endIso)
-  const windowInfo = useMemo(() => {
+  // ✅ IMPORTANT: pas d'objet "windowInfo" dans deps de useEffect
+  const { startIso, endIso, label: windowLabel } = useMemo(() => {
     return availableNow ? computeNowWindow() : computeNextUsefulWindow();
   }, [availableNow]);
 
@@ -271,7 +284,7 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
     runIdRef.current += 1;
     const myRunId = runIdRef.current;
 
-    // IMPORTANT: on met checking mais ON NE GRISE PAS pendant checking
+    // On met checking mais ON NE GRISE PAS pendant checking
     setAvailabilityById((prev) => {
       const next: Record<string, AvState> = { ...prev };
       for (const p of filtered) next[p.id] = { state: "checking" };
@@ -281,8 +294,6 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
     const controller = new AbortController();
 
     const run = async () => {
-      const { startIso, endIso } = windowInfo;
-
       const concurrency = 10;
       let idx = 0;
 
@@ -295,16 +306,24 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
           try {
             const url = `/api/bookings/availability?parkingId=${encodeURIComponent(
               p.id
-            )}&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}`;
+            )}&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(
+              endIso
+            )}`;
 
             const res = await fetch(url, { signal: controller.signal });
-            const json: AvailApiOk | AvailApiErr = await res.json().catch(() => ({}));
+            const json: AvailApiOk | AvailApiErr = await res
+              .json()
+              .catch(() => ({}));
 
             if (runIdRef.current !== myRunId) return;
 
             if (!res.ok) {
-              const msg = extractReason(json) ?? `Erreur disponibilité (${res.status})`;
-              setAvailabilityById((prev) => ({ ...prev, [p.id]: { state: "error", message: msg } }));
+              const msg =
+                extractReason(json) ?? `Erreur disponibilité (${res.status})`;
+              setAvailabilityById((prev) => ({
+                ...prev,
+                [p.id]: { state: "error", message: msg },
+              }));
               continue;
             }
 
@@ -320,17 +339,24 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
             if (runIdRef.current !== myRunId) return;
 
             const msg = e instanceof Error ? e.message : "Erreur inconnue";
-            setAvailabilityById((prev) => ({ ...prev, [p.id]: { state: "error", message: msg } }));
+            setAvailabilityById((prev) => ({
+              ...prev,
+              [p.id]: { state: "error", message: msg },
+            }));
           }
         }
       };
 
-      await Promise.all(Array.from({ length: Math.min(concurrency, filtered.length) }, () => worker()));
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, filtered.length) }, () =>
+          worker()
+        )
+      );
     };
 
     void run();
     return () => controller.abort();
-  }, [filtered, windowInfo.startIso, windowInfo.endIso]);
+  }, [filtered, startIso, endIso]);
 
   return (
     <main className={UI.page}>
@@ -340,16 +366,22 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
           <div>
             <h1 className={UI.h1}>Trouver une place</h1>
             <p className={[UI.p, "mt-2"].join(" ")}>
-              Recherche par rue / ville + filtres utiles (couverte, sécurisée, éclairée…)
+              Recherche par rue / ville + filtres utiles (couverte, sécurisée,
+              éclairée…)
             </p>
-            {updatedLabel ? <p className={[UI.subtle, "mt-1"].join(" ")}>{updatedLabel}</p> : null}
+            {updatedLabel ? (
+              <p className={[UI.subtle, "mt-1"].join(" ")}>{updatedLabel}</p>
+            ) : null}
           </div>
 
           <div className="flex gap-2">
             <Link href="/map" className={[UI.btnBase, UI.btnGhost].join(" ")}>
               Vue carte
             </Link>
-            <Link href="/parkings/new" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
+            <Link
+              href="/parkings/new"
+              className={[UI.btnBase, UI.btnPrimary].join(" ")}
+            >
               Proposer
             </Link>
           </div>
@@ -359,19 +391,27 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
         <section className={[UI.card, UI.cardPad, "mt-6"].join(" ")}>
           <div className="grid gap-3 md:grid-cols-4">
             <div className="md:col-span-2">
-              <label className="text-xs font-medium text-slate-700">Recherche</label>
+              <label className="text-xs font-medium text-slate-700">
+                Recherche
+              </label>
               <input
                 className={[UI.input, "mt-1"].join(" ")}
                 placeholder="Rue, numéro, code postal, ville…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
-              <div className={[UI.subtle, "mt-1"].join(" ")}>Exemple : “Rue de Lausanne”, “1201”, “Genève”</div>
+              <div className={[UI.subtle, "mt-1"].join(" ")}>
+                Exemple : “Rue de Lausanne”, “1201”, “Genève”
+              </div>
             </div>
 
             <div>
               <label className="text-xs font-medium text-slate-700">Type</label>
-              <select className={[UI.select, "mt-1"].join(" ")} value={type} onChange={(e) => onTypeChange(e.target.value)}>
+              <select
+                className={[UI.select, "mt-1"].join(" ")}
+                value={type}
+                onChange={(e) => onTypeChange(e.target.value)}
+              >
                 <option value="all">Tous</option>
                 <option value="outdoor">Extérieur</option>
                 <option value="indoor">Intérieur</option>
@@ -380,7 +420,9 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-700">Couverture</label>
+              <label className="text-xs font-medium text-slate-700">
+                Couverture
+              </label>
               <select
                 className={[UI.select, "mt-1"].join(" ")}
                 value={covered}
@@ -399,7 +441,10 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
           <div className="mt-4 flex flex-wrap gap-2 items-center">
             <button
               type="button"
-              className={[UI.btnBase, secure ? UI.btnPrimary : UI.btnGhost].join(" ")}
+              className={[
+                UI.btnBase,
+                secure ? UI.btnPrimary : UI.btnGhost,
+              ].join(" ")}
               onClick={() => setSecure((v) => !v)}
             >
               🔒 Sécurisée
@@ -407,7 +452,10 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
 
             <button
               type="button"
-              className={[UI.btnBase, lit ? UI.btnPrimary : UI.btnGhost].join(" ")}
+              className={[
+                UI.btnBase,
+                lit ? UI.btnPrimary : UI.btnGhost,
+              ].join(" ")}
               onClick={() => setLit((v) => !v)}
             >
               💡 Éclairée
@@ -415,7 +463,9 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
 
             <button
               type="button"
-              className={[UI.btnBase, ev ? UI.btnPrimary : UI.btnGhost].join(" ")}
+              className={[UI.btnBase, ev ? UI.btnPrimary : UI.btnGhost].join(
+                " "
+              )}
               onClick={() => setEv((v) => !v)}
             >
               ⚡ Borne EV
@@ -449,19 +499,28 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
               Réinitialiser
             </button>
 
-            <button type="button" className={[UI.btnBase, UI.btnGhost].join(" ")} onClick={() => void load()} disabled={loading}>
+            <button
+              type="button"
+              className={[UI.btnBase, UI.btnGhost].join(" ")}
+              onClick={() => void load()}
+              disabled={loading}
+            >
               {loading ? "Chargement…" : "Rafraîchir"}
             </button>
           </div>
         </section>
 
-        {error ? <p className="mt-4 text-sm text-rose-600">Erreur : {error}</p> : null}
+        {error ? (
+          <p className="mt-4 text-sm text-rose-600">Erreur : {error}</p>
+        ) : null}
 
         {/* Results */}
         <section className="mt-6">
           <div className="flex items-center justify-between">
             <div className="text-sm text-slate-600">
-              {loading && rows.length === 0 ? "Chargement…" : `${filtered.length} place(s) trouvée(s)`}
+              {loading && rows.length === 0
+                ? "Chargement…"
+                : `${filtered.length} place(s) trouvée(s)`}
             </div>
           </div>
 
@@ -479,7 +538,12 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
                 <Link
                   key={p.id}
                   href={`/parkings/${p.id}`}
-                  className={cx(UI.card, UI.cardHover, "block overflow-hidden relative", unavailable ? "opacity-60 grayscale" : "")}
+                  className={cx(
+                    UI.card,
+                    UI.cardHover,
+                    "block overflow-hidden relative",
+                    unavailable ? "opacity-60 grayscale" : ""
+                  )}
                   title={
                     av.state === "unavailable"
                       ? unavailableReason
@@ -488,7 +552,7 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
                       : ""
                   }
                 >
-                  {/* Badge overlay très visible (reste lisible même si card grisée) */}
+                  {/* Badge overlay très visible */}
                   {unavailable ? (
                     <div className="absolute top-3 left-3 z-10">
                       <span className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg">
@@ -500,12 +564,18 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
                   <div className="w-full h-40 bg-slate-100 relative">
                     {photo ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={photo} alt="" className="w-full h-full object-cover" />
+                      <img
+                        src={photo}
+                        alt=""
+                        className="w-full h-full object-cover"
+                      />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">Aucune photo</div>
+                      <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                        Aucune photo
+                      </div>
                     )}
 
-                    {/* Bandeau rouge très visible en bas de la photo */}
+                    {/* Bandeau rouge bas sur photo */}
                     {unavailable ? (
                       <div className="absolute inset-x-0 bottom-0 z-10">
                         <div className="bg-rose-600/95 text-white text-xs font-semibold px-3 py-2">
@@ -518,26 +588,42 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
                   <div className={UI.cardPad}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="font-semibold text-slate-900 truncate">{p.title}</div>
-                        <div className="mt-1 text-xs text-slate-500">{formatAddress(p) || "Adresse non renseignée"}</div>
+                        <div className="font-semibold text-slate-900 truncate">
+                          {p.title}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {formatAddress(p) || "Adresse non renseignée"}
+                        </div>
                       </div>
 
                       <div className="shrink-0 text-right">
                         {p.price_hour !== null ? (
-                          <div className="text-sm font-semibold text-slate-900">{p.price_hour} CHF/h</div>
+                          <div className="text-sm font-semibold text-slate-900">
+                            {p.price_hour} CHF/h
+                          </div>
                         ) : (
                           <div className="text-sm text-slate-400">—</div>
                         )}
-                        {p.price_day !== null ? <div className="text-xs text-slate-500">{p.price_day} CHF/j</div> : null}
+                        {p.price_day !== null ? (
+                          <div className="text-xs text-slate-500">
+                            {p.price_day} CHF/j
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
-                      <span className={UI.chip}>{toTypeLabel(p.parking_type)}</span>
-                      <span className={UI.chip}>{p.is_covered ? "Couverte" : "Non couverte"}</span>
+                      <span className={UI.chip}>
+                        {toTypeLabel(p.parking_type)}
+                      </span>
+                      <span className={UI.chip}>
+                        {p.is_covered ? "Couverte" : "Non couverte"}
+                      </span>
                       {p.is_secure ? <span className={UI.chip}>🔒</span> : null}
                       {p.is_lit ? <span className={UI.chip}>💡</span> : null}
-                      {p.has_ev_charger ? <span className={UI.chip}>⚡ EV</span> : null}
+                      {p.has_ev_charger ? (
+                        <span className={UI.chip}>⚡ EV</span>
+                      ) : null}
                     </div>
 
                     <div className="mt-4 flex items-center justify-between">
@@ -581,13 +667,16 @@ export default function ParkingsClient({ initialRows }: { initialRows?: ParkingR
             {!loading && filtered.length === 0 ? (
               <div className={[UI.card, UI.cardPad].join(" ")}>
                 <div className="font-semibold text-slate-900">Aucun résultat</div>
-                <p className={[UI.p, "mt-2"].join(" ")}>Essaie de retirer des filtres ou d’élargir la recherche.</p>
+                <p className={[UI.p, "mt-2"].join(" ")}>
+                  Essaie de retirer des filtres ou d’élargir la recherche.
+                </p>
               </div>
             ) : null}
           </div>
 
           <div className="mt-4 text-xs text-slate-500">
-            * “Disponible / Indisponible” correspond à un check <b>{windowInfo.label}</b> (planning propriétaire, blackouts, réservations).
+            * “Disponible / Indisponible” correspond à un check{" "}
+            <b>{windowLabel}</b> (planning propriétaire, blackouts, réservations).
           </div>
         </section>
       </div>
