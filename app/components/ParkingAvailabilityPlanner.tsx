@@ -1,676 +1,395 @@
-// app/parkings/ParkingsClient.tsx
+// app/components/ParkingAvailabilityPlanner.tsx
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
+import { useRouter } from "next/navigation";
 
-type ParkingType = "outdoor" | "indoor" | "garage";
-
-export type ParkingRow = {
-  id: string;
-  title: string;
-  street: string | null;
-  street_number: string | null;
-  postal_code: string | null;
-  city: string | null;
-  address: string | null;
-
-  price_hour: number | null;
-  price_day: number | null;
-
-  parking_type: ParkingType | null;
-  is_covered: boolean | null;
-  has_ev_charger: boolean | null;
-  is_secure: boolean | null;
-  is_lit: boolean | null;
-
-  photos: string[] | null;
-  is_active: boolean | null;
+type Slot = {
+  weekday: number; // 1..7
+  start_time: string; // "HH:MM"
+  end_time: string; // "HH:MM"
+  enabled: boolean;
 };
 
-function formatAddress(p: ParkingRow) {
-  if (p.address && p.address.trim()) return p.address;
+const DAYS: Array<{ weekday: number; label: string; short: string }> = [
+  { weekday: 1, label: "Lundi", short: "Lun" },
+  { weekday: 2, label: "Mardi", short: "Mar" },
+  { weekday: 3, label: "Mercredi", short: "Mer" },
+  { weekday: 4, label: "Jeudi", short: "Jeu" },
+  { weekday: 5, label: "Vendredi", short: "Ven" },
+  { weekday: 6, label: "Samedi", short: "Sam" },
+  { weekday: 7, label: "Dimanche", short: "Dim" },
+];
 
-  const a1 = p.street
-    ? `${p.street}${p.street_number ? " " + p.street_number : ""}`
-    : "";
-  const a2 =
-    p.postal_code || p.city
-      ? `${p.postal_code ?? ""} ${p.city ?? ""}`.trim()
-      : "";
-  return [a1, a2].filter(Boolean).join(", ");
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
-function toTypeLabel(t: ParkingType | null) {
-  if (t === "indoor") return "Intérieur";
-  if (t === "garage") return "Garage";
-  return "Extérieur";
+function isTimeHHMM(v: string) {
+  return /^\d{2}:\d{2}$/.test(v);
 }
 
-function normalizeRows(input: unknown): ParkingRow[] {
-  if (!Array.isArray(input)) return [];
-  return (input as ParkingRow[]).filter((x) => x && typeof x.id === "string");
+function toHHMM(v: unknown, fallback = "08:00") {
+  const s = typeof v === "string" ? v.trim() : "";
+  if (!s) return fallback;
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s.slice(0, 5);
+  return fallback;
 }
 
-function sameRow(a: ParkingRow, b: ParkingRow) {
-  return (
-    a.id === b.id &&
-    a.title === b.title &&
-    a.address === b.address &&
-    a.street === b.street &&
-    a.street_number === b.street_number &&
-    a.postal_code === b.postal_code &&
-    a.city === b.city &&
-    a.price_hour === b.price_hour &&
-    a.price_day === b.price_day &&
-    a.parking_type === b.parking_type &&
-    a.is_covered === b.is_covered &&
-    a.has_ev_charger === b.has_ev_charger &&
-    a.is_secure === b.is_secure &&
-    a.is_lit === b.is_lit &&
-    JSON.stringify(a.photos ?? []) === JSON.stringify(b.photos ?? []) &&
-    a.is_active === b.is_active
-  );
+function defaultSlots(): Slot[] {
+  // par défaut: semaine ON 08:00-18:00
+  return DAYS.map((d) => ({
+    weekday: d.weekday,
+    start_time: "08:00",
+    end_time: "18:00",
+    enabled: d.weekday <= 5,
+  }));
 }
 
-function sameList(a: ParkingRow[], b: ParkingRow[]) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (!sameRow(a[i]!, b[i]!)) return false;
-  }
-  return true;
+function presetOffice(): Slot[] {
+  return DAYS.map((d) => ({
+    weekday: d.weekday,
+    start_time: "08:00",
+    end_time: "18:00",
+    enabled: d.weekday <= 5,
+  }));
 }
 
-function cx(...s: Array<string | false | null | undefined>) {
-  return s.filter(Boolean).join(" ");
+function presetEvening(): Slot[] {
+  return DAYS.map((d) => ({
+    weekday: d.weekday,
+    start_time: "18:00",
+    end_time: "23:00",
+    enabled: true,
+  }));
 }
 
-type AvState =
-  | { state: "idle" }
-  | { state: "checking" }
-  | { state: "available" }
-  | { state: "unavailable"; reason?: string }
-  | { state: "error"; message: string };
-
-type AvailApiOk = { available: boolean; reason?: string };
-type AvailApiErr = { error?: string; detail?: string; reason?: string };
-
-function extractReason(json: unknown): string | undefined {
-  if (!json || typeof json !== "object") return undefined;
-  const o = json as Record<string, unknown>;
-  const reason = typeof o.reason === "string" ? o.reason : undefined;
-  const detail = typeof o.detail === "string" ? o.detail : undefined;
-  const error = typeof o.error === "string" ? o.error : undefined;
-  return reason || detail || error || undefined;
+function presetAllDay(): Slot[] {
+  return DAYS.map((d) => ({
+    weekday: d.weekday,
+    start_time: "00:00",
+    end_time: "23:59",
+    enabled: true,
+  }));
 }
 
-function normalizeReason(r?: string) {
-  const s = (r ?? "").trim();
-  return s || "Fermé / hors horaires du propriétaire";
-}
+function normalizeSlotsFromApi(apiSlots: Array<Partial<Slot>>): Slot[] {
+  const map = new Map<number, Slot>();
 
-function labelFromReason(r?: string) {
-  const s = normalizeReason(r).toLowerCase();
-  if (s.includes("blackout")) return "Blackout";
-  if (s.includes("réserv") || s.includes("deja reserv") || s.includes("déjà"))
-    return "Déjà réservé";
-  if (s.includes("désactiv")) return "Désactivée";
-  if (s.includes("hors horaires") || s.includes("ferm")) return "Hors horaires";
-  return "Indisponible";
-}
+  for (const raw of apiSlots ?? []) {
+    const wd = typeof raw.weekday === "number" ? raw.weekday : 0;
+    if (wd < 1 || wd > 7) continue;
 
-/**
- * Fenêtre de check "Prochaine heure exploitable"
- * - avant 08:00 => 08:00–09:00
- * - entre 08:00 et 18:00 => prochaine heure pleine
- * - après 18:00 => demain 08:00–09:00
- */
-function computeNextUsefulWindow() {
-  const now = new Date();
-
-  const start = new Date(now);
-  start.setMinutes(0, 0, 0);
-  start.setHours(start.getHours() + 1);
-
-  const hour = start.getHours();
-
-  if (hour < 8) {
-    start.setHours(8, 0, 0, 0);
-  } else if (hour >= 18) {
-    start.setDate(start.getDate() + 1);
-    start.setHours(8, 0, 0, 0);
+    map.set(wd, {
+      weekday: wd,
+      start_time: toHHMM(raw.start_time, "08:00"),
+      end_time: toHHMM(raw.end_time, "18:00"),
+      enabled: Boolean(raw.enabled),
+    });
   }
 
-  const end = new Date(start.getTime() + 60 * 60 * 1000);
-  return {
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
-    label: "prochaine heure exploitable",
-  };
+  // ✅ DECISION: si aucun planning en DB -> défaut UI (semaine ON)
+  if (map.size === 0) return defaultSlots();
+
+  // sinon: on complète les jours manquants en OFF
+  return DAYS.map((d) => {
+    const found = map.get(d.weekday);
+    return found
+      ? found
+      : { weekday: d.weekday, start_time: "08:00", end_time: "18:00", enabled: false };
+  });
 }
 
-function computeNowWindow() {
-  const start = new Date();
-  const end = new Date(start.getTime() + 60 * 60 * 1000);
-  return { startIso: start.toISOString(), endIso: end.toISOString(), label: "maintenant → +1h" };
-}
+export default function ParkingAvailabilityPlanner({ parkingId }: { parkingId: string }) {
+  const router = useRouter();
+  const { ready, session } = useAuth();
 
-export default function ParkingsClient({
-  initialRows,
-}: {
-  initialRows?: ParkingRow[];
-}) {
-  const [rows, setRows] = useState<ParkingRow[]>(
-    normalizeRows(initialRows) ?? []
-  );
+  const [slots, setSlots] = useState<Slot[]>(defaultSlots());
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
 
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const authHeader = useMemo(() => {
+    const t = session?.access_token;
+    return t ? { Authorization: `Bearer ${t}` } : null;
+  }, [session?.access_token]);
 
-  // Filters
-  const [q, setQ] = useState("");
-  const [type, setType] = useState<"all" | ParkingType>("all");
-  const [covered, setCovered] = useState<"all" | "yes" | "no">("all");
-  const [secure, setSecure] = useState(false);
-  const [lit, setLit] = useState(false);
-  const [ev, setEv] = useState(false);
+  const parkingIdSafe = useMemo(() => String(parkingId ?? "").trim(), [parkingId]);
+  const parkingReady = useMemo(() => isUuid(parkingIdSafe), [parkingIdSafe]);
 
-  // ✅ MODE B PAR DÉFAUT : dispo maintenant
-  const [availableNow, setAvailableNow] = useState(true);
+  const setSlot = (weekday: number, patch: Partial<Slot>) => {
+    setSlots((prev) => prev.map((s) => (s.weekday === weekday ? { ...s, ...patch, weekday } : s)));
+  };
 
-  const didMountRef = useRef(false);
+  const copyToAll = (weekday: number) => {
+    const src = slots.find((s) => s.weekday === weekday);
+    if (!src) return;
+    setSlots((prev) =>
+      prev.map((s) => ({
+        ...s,
+        start_time: src.start_time,
+        end_time: src.end_time,
+        enabled: src.enabled,
+      }))
+    );
+  };
 
-  // Dispo par id
-  const [availabilityById, setAvailabilityById] = useState<
-    Record<string, AvState>
-  >({});
+  const validate = (): string | null => {
+    for (const s of slots) {
+      if (s.weekday < 1 || s.weekday > 7) return "weekday invalide";
+      if (!isTimeHHMM(s.start_time) || !isTimeHHMM(s.end_time)) return "Heures invalides.";
+      if (s.enabled && s.end_time <= s.start_time) return "end_time doit être après start_time";
+    }
+    return null;
+  };
 
-  // runId anti-retours obsolètes
-  const runIdRef = useRef(0);
+  const load = async () => {
+    if (!authHeader) return;
+    if (!parkingReady) return;
 
-  const load = async (opts?: { silent?: boolean }) => {
-    const silent = !!opts?.silent;
-    if (!silent) setLoading(true);
-    setError(null);
+    setLoading(true);
+    setErr(null);
+    setOkMsg(null);
 
     try {
-      const supabase = supabaseBrowser();
+      const url = `/api/owner/availability/get?parkingId=${encodeURIComponent(parkingIdSafe)}`;
+      const res = await fetch(url, { headers: authHeader });
 
-      const { data, error } = await supabase
-        .from("parkings")
-        .select(
-          "id,title,street,street_number,postal_code,city,address,price_hour,price_day,parking_type,is_covered,has_ev_charger,is_secure,is_lit,photos,is_active"
-        )
-        .eq("is_active", true)
-        .order("created_at", { ascending: false });
+      const json = (await res.json().catch(() => ({}))) as
+        | { ok: true; slots: Array<Partial<Slot>> }
+        | { ok: false; error: string };
 
-      if (error) throw new Error(error.message);
+      if (!res.ok || !("ok" in json) || json.ok === false) {
+        setErr("error" in json ? json.error : `Erreur (${res.status})`);
+        setLoading(false);
+        return;
+      }
 
-      const next = normalizeRows(data ?? []);
-      setRows((prev) => (sameList(prev, next) ? prev : next));
-      setLastUpdatedAt(Date.now());
+      setSlots(normalizeSlotsFromApi(json.slots ?? []));
+      setLoading(false);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Erreur inconnue");
-      setRows((prev) => prev);
-    } finally {
-      if (!silent) setLoading(false);
+      setErr(e instanceof Error ? e.message : "Erreur chargement planning");
+      setLoading(false);
+    }
+  };
+
+  const save = async () => {
+    if (!authHeader) return;
+    if (!parkingReady) {
+      setErr("parkingId invalide (place non chargée)");
+      return;
+    }
+
+    setErr(null);
+    setOkMsg(null);
+
+    const v = validate();
+    if (v) {
+      setErr(v);
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const res = await fetch("/api/owner/availability/upsert", {
+        method: "POST",
+        headers: { ...authHeader, "Content-Type": "application/json" },
+        body: JSON.stringify({ parkingId: parkingIdSafe, slots }),
+      });
+
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+
+      if (!res.ok || !json.ok) {
+        setErr(json.error ?? `Erreur (${res.status})`);
+        setSaving(false);
+        return;
+      }
+
+      setOkMsg("✅ Planning enregistré !");
+      setSaving(false);
+
+      // ✅ OPTION: rediriger automatiquement vers mes places
+      // router.push("/my-parkings");
+      // router.refresh();
+
+      // sinon on recharge juste
+      await load();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Erreur enregistrement planning");
+      setSaving(false);
     }
   };
 
   useEffect(() => {
-    if (didMountRef.current) return;
-    didMountRef.current = true;
-    void load({ silent: rows.length > 0 });
+    if (!ready || !session || !authHeader) return;
+    if (!parkingReady) return;
+    queueMicrotask(() => void load());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ready, session?.user?.id, parkingReady, parkingIdSafe]);
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
+  const enabledCount = useMemo(() => slots.filter((s) => s.enabled).length, [slots]);
 
-    return rows.filter((p) => {
-      const addr = formatAddress(p).toLowerCase();
-      const title = (p.title ?? "").toLowerCase();
+  if (!ready) return <p className={UI.p}>Chargement…</p>;
+  if (!session) return <p className={UI.p}>Tu dois être connecté.</p>;
 
-      if (needle) {
-        const ok = title.includes(needle) || addr.includes(needle);
-        if (!ok) return false;
-      }
-
-      if (type !== "all" && p.parking_type !== type) return false;
-
-      if (covered !== "all") {
-        const isCov = !!p.is_covered;
-        if (covered === "yes" && !isCov) return false;
-        if (covered === "no" && isCov) return false;
-      }
-
-      if (secure && !p.is_secure) return false;
-      if (lit && !p.is_lit) return false;
-      if (ev && !p.has_ev_charger) return false;
-
-      return true;
-    });
-  }, [rows, q, type, covered, secure, lit, ev]);
-
-  const onTypeChange = (v: string) => {
-    if (v === "all" || v === "outdoor" || v === "indoor" || v === "garage")
-      setType(v);
-  };
-
-  const updatedLabel = useMemo(() => {
-    if (!lastUpdatedAt) return null;
-    const d = new Date(lastUpdatedAt);
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    return `Mis à jour à ${hh}:${mm}`;
-  }, [lastUpdatedAt]);
-
-  const { startIso, endIso, label: windowLabel } = useMemo(() => {
-    return availableNow ? computeNowWindow() : computeNextUsefulWindow();
-  }, [availableNow]);
-
-  useEffect(() => {
-    if (filtered.length === 0) return;
-
-    runIdRef.current += 1;
-    const myRunId = runIdRef.current;
-
-    // checking partout (mais on ne grise pas pendant checking)
-    setAvailabilityById((prev) => {
-      const next: Record<string, AvState> = { ...prev };
-      for (const p of filtered) next[p.id] = { state: "checking" };
-      return next;
-    });
-
-    const controller = new AbortController();
-
-    const run = async () => {
-      const concurrency = 10;
-      let idx = 0;
-
-      const worker = async () => {
-        while (idx < filtered.length) {
-          const i = idx++;
-          const p = filtered[i];
-          if (!p) continue;
-
-          try {
-            const url = `/api/bookings/availability?parkingId=${encodeURIComponent(
-              p.id
-            )}&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(
-              endIso
-            )}`;
-
-            const res = await fetch(url, { signal: controller.signal });
-            const json: AvailApiOk | AvailApiErr = await res
-              .json()
-              .catch(() => ({}));
-
-            if (runIdRef.current !== myRunId) return;
-
-            if (!res.ok) {
-              const msg =
-                extractReason(json) ?? `Erreur disponibilité (${res.status})`;
-              setAvailabilityById((prev) => ({
-                ...prev,
-                [p.id]: { state: "error", message: msg },
-              }));
-              continue;
-            }
-
-            const ok = json as AvailApiOk;
-            setAvailabilityById((prev) => ({
-              ...prev,
-              [p.id]: ok.available
-                ? { state: "available" }
-                : { state: "unavailable", reason: ok.reason },
-            }));
-          } catch (e: unknown) {
-            if (e instanceof DOMException && e.name === "AbortError") return;
-            if (runIdRef.current !== myRunId) return;
-
-            const msg = e instanceof Error ? e.message : "Erreur inconnue";
-            setAvailabilityById((prev) => ({
-              ...prev,
-              [p.id]: { state: "error", message: msg },
-            }));
-          }
-        }
-      };
-
-      await Promise.all(
-        Array.from({ length: Math.min(concurrency, filtered.length) }, () =>
-          worker()
-        )
-      );
-    };
-
-    void run();
-    return () => controller.abort();
-  }, [filtered, startIso, endIso]);
+  if (!parkingReady) {
+    return (
+      <div className={`${UI.card} ${UI.cardPad} border border-amber-200 bg-amber-50/60`}>
+        <p className="text-sm text-slate-800">
+          ⏳ Chargement de la place… (planning indisponible tant que l’ID n’est pas prêt)
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <main className={UI.page}>
-      <div className={[UI.container, UI.section].join(" ")}>
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-          <div>
-            <h1 className={UI.h1}>Trouver une place</h1>
-            <p className={[UI.p, "mt-2"].join(" ")}>
-              Recherche par rue / ville + filtres utiles (couverte, sécurisée,
-              éclairée…)
-            </p>
-            {updatedLabel ? (
-              <p className={[UI.subtle, "mt-1"].join(" ")}>{updatedLabel}</p>
-            ) : null}
-          </div>
+    <div className="space-y-4">
+      {err ? (
+        <div className={`${UI.card} ${UI.cardPad} border border-rose-200 bg-rose-50/60`}>
+          <p className="text-sm text-rose-700">
+            <b>Erreur :</b> {err}
+          </p>
+        </div>
+      ) : null}
 
-          <div className="flex gap-2">
-            <Link href="/map" className={[UI.btnBase, UI.btnGhost].join(" ")}>
-              Vue carte
-            </Link>
-            <Link
-              href="/parkings/new"
-              className={[UI.btnBase, UI.btnPrimary].join(" ")}
-            >
-              Proposer
-            </Link>
-          </div>
+      {okMsg ? (
+        <div className={`${UI.card} ${UI.cardPad} border border-emerald-200 bg-emerald-50/60`}>
+          <p className="text-sm text-emerald-800">{okMsg}</p>
+        </div>
+      ) : null}
+
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          <span className={UI.chip}>
+            Jours actifs : <b>{enabledCount}/7</b>
+          </span>
+          <span className={UI.chip}>Planning propriétaire</span>
         </div>
 
-        {/* Filters */}
-        <section className={[UI.card, UI.cardPad, "mt-6"].join(" ")}>
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="md:col-span-2">
-              <label className="text-xs font-medium text-slate-700">
-                Recherche
-              </label>
-              <input
-                className={[UI.input, "mt-1"].join(" ")}
-                placeholder="Rue, numéro, code postal, ville…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-              <div className={[UI.subtle, "mt-1"].join(" ")}>
-                Exemple : “Rue de Lausanne”, “1201”, “Genève”
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-slate-700">Type</label>
-              <select
-                className={[UI.select, "mt-1"].join(" ")}
-                value={type}
-                onChange={(e) => onTypeChange(e.target.value)}
-              >
-                <option value="all">Tous</option>
-                <option value="outdoor">Extérieur</option>
-                <option value="indoor">Intérieur</option>
-                <option value="garage">Garage</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-slate-700">
-                Couverture
-              </label>
-              <select
-                className={[UI.select, "mt-1"].join(" ")}
-                value={covered}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === "all" || v === "yes" || v === "no") setCovered(v);
-                }}
-              >
-                <option value="all">Peu importe</option>
-                <option value="yes">Couverte</option>
-                <option value="no">Non couverte</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2 items-center">
-            <button
-              type="button"
-              className={[
-                UI.btnBase,
-                secure ? UI.btnPrimary : UI.btnGhost,
-              ].join(" ")}
-              onClick={() => setSecure((v) => !v)}
-            >
-              🔒 Sécurisée
-            </button>
-
-            <button
-              type="button"
-              className={[
-                UI.btnBase,
-                lit ? UI.btnPrimary : UI.btnGhost,
-              ].join(" ")}
-              onClick={() => setLit((v) => !v)}
-            >
-              💡 Éclairée
-            </button>
-
-            <button
-              type="button"
-              className={[UI.btnBase, ev ? UI.btnPrimary : UI.btnGhost].join(
-                " "
-              )}
-              onClick={() => setEv((v) => !v)}
-            >
-              ⚡ Borne EV
-            </button>
-
-            <div className="flex-1" />
-
-            {/* Toggle dispo maintenant */}
-            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                className="accent-violet-600"
-                checked={availableNow}
-                onChange={(e) => setAvailableNow(e.target.checked)}
-              />
-              Disponible maintenant
-            </label>
-
-            <button
-              type="button"
-              className={[UI.btnBase, UI.btnGhost].join(" ")}
-              onClick={() => {
-                setQ("");
-                setType("all");
-                setCovered("all");
-                setSecure(false);
-                setLit(false);
-                setEv(false);
-              }}
-            >
-              Réinitialiser
-            </button>
-
-            <button
-              type="button"
-              className={[UI.btnBase, UI.btnGhost].join(" ")}
-              onClick={() => void load()}
-              disabled={loading}
-            >
-              {loading ? "Chargement…" : "Rafraîchir"}
-            </button>
-          </div>
-        </section>
-
-        {error ? (
-          <p className="mt-4 text-sm text-rose-600">Erreur : {error}</p>
-        ) : null}
-
-        {/* Results */}
-        <section className="mt-6">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-slate-600">
-              {loading && rows.length === 0
-                ? "Chargement…"
-                : `${filtered.length} place(s) trouvée(s)`}
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((p) => {
-              const photo = p.photos?.[0] ?? null;
-
-              const av = availabilityById[p.id] ?? ({ state: "checking" } as const);
-
-              const unavailable = av.state === "unavailable";
-              const unavailableReason = unavailable ? normalizeReason(av.reason) : "";
-
-              return (
-                <Link
-                  key={p.id}
-                  href={`/parkings/${p.id}`}
-                  className={cx(
-                    UI.card,
-                    UI.cardHover,
-                    "block overflow-hidden relative",
-                    unavailable ? "opacity-60 grayscale" : ""
-                  )}
-                  title={
-                    av.state === "unavailable"
-                      ? unavailableReason
-                      : av.state === "checking"
-                      ? "Vérification disponibilité…"
-                      : ""
-                  }
-                >
-                  {unavailable ? (
-                    <div className="absolute top-3 left-3 z-10">
-                      <span className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg">
-                        {labelFromReason(unavailableReason)}
-                      </span>
-                    </div>
-                  ) : null}
-
-                  <div className="w-full h-40 bg-slate-100 relative">
-                    {photo ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={photo}
-                        alt=""
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
-                        Aucune photo
-                      </div>
-                    )}
-
-                    {unavailable ? (
-                      <div className="absolute inset-x-0 bottom-0 z-10">
-                        <div className="bg-rose-600/95 text-white text-xs font-semibold px-3 py-2">
-                          ❌ Indisponible — {unavailableReason}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className={UI.cardPad}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-semibold text-slate-900 truncate">
-                          {p.title}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {formatAddress(p) || "Adresse non renseignée"}
-                        </div>
-                      </div>
-
-                      <div className="shrink-0 text-right">
-                        {p.price_hour !== null ? (
-                          <div className="text-sm font-semibold text-slate-900">
-                            {p.price_hour} CHF/h
-                          </div>
-                        ) : (
-                          <div className="text-sm text-slate-400">—</div>
-                        )}
-                        {p.price_day !== null ? (
-                          <div className="text-xs text-slate-500">
-                            {p.price_day} CHF/j
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <span className={UI.chip}>
-                        {toTypeLabel(p.parking_type)}
-                      </span>
-                      <span className={UI.chip}>
-                        {p.is_covered ? "Couverte" : "Non couverte"}
-                      </span>
-                      {p.is_secure ? <span className={UI.chip}>🔒</span> : null}
-                      {p.is_lit ? <span className={UI.chip}>💡</span> : null}
-                      {p.has_ev_charger ? (
-                        <span className={UI.chip}>⚡ EV</span>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between">
-                      <span
-                        className={cx(
-                          UI.chip,
-                          av.state === "available"
-                            ? "font-medium text-emerald-700"
-                            : av.state === "unavailable"
-                            ? "font-medium text-rose-700"
-                            : av.state === "error"
-                            ? "font-medium text-amber-700"
-                            : "text-slate-600"
-                        )}
-                      >
-                        {av.state === "checking"
-                          ? "Vérification…"
-                          : av.state === "available"
-                          ? "Disponible"
-                          : av.state === "unavailable"
-                          ? "Indisponible"
-                          : "Disponibilité inconnue"}
-                      </span>
-
-                      <span
-                        className={cx(
-                          UI.btnBase,
-                          UI.btnPrimary,
-                          "px-3 py-1.5 text-xs rounded-full pointer-events-none",
-                          unavailable ? "opacity-70" : ""
-                        )}
-                      >
-                        Détails
-                      </span>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-
-            {!loading && filtered.length === 0 ? (
-              <div className={[UI.card, UI.cardPad].join(" ")}>
-                <div className="font-semibold text-slate-900">Aucun résultat</div>
-                <p className={[UI.p, "mt-2"].join(" ")}>
-                  Essaie de retirer des filtres ou d’élargir la recherche.
-                </p>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mt-4 text-xs text-slate-500">
-            * “Disponible / Indisponible” correspond à un check{" "}
-            <b>{windowLabel}</b> (planning propriétaire, blackouts, réservations).
-          </div>
-        </section>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => setSlots(presetOffice())}>
+            Bureau
+          </button>
+          <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => setSlots(presetEvening())}>
+            Soir
+          </button>
+          <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => setSlots(presetAllDay())}>
+            24/7
+          </button>
+        </div>
       </div>
-    </main>
+
+      {loading ? (
+        <div className={`${UI.card} ${UI.cardPad}`}>
+          <p className={UI.p}>Chargement du planning…</p>
+        </div>
+      ) : null}
+
+      <div className="grid gap-3">
+        {DAYS.map((d) => {
+          const s =
+            slots.find((x) => x.weekday === d.weekday) ?? {
+              weekday: d.weekday,
+              start_time: "08:00",
+              end_time: "18:00",
+              enabled: false,
+            };
+
+          return (
+            <div
+              key={d.weekday}
+              className={[
+                "rounded-2xl border border-slate-200/70 bg-white/70 backdrop-blur",
+                "p-4 sm:p-5",
+                "flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4",
+              ].join(" ")}
+            >
+              <div className="flex items-center justify-between sm:w-[240px]">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={[
+                      "w-10 h-10 rounded-2xl flex items-center justify-center font-semibold",
+                      s.enabled ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-700",
+                    ].join(" ")}
+                  >
+                    {d.short}
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900">{d.label}</div>
+                    <div className="text-xs text-slate-500">{s.enabled ? "Disponible" : "Fermé"}</div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className={`${UI.btnBase} ${UI.btnGhost} px-3 py-2 rounded-full`}
+                  onClick={() => setSlot(d.weekday, { enabled: !s.enabled })}
+                >
+                  {s.enabled ? "ON" : "OFF"}
+                </button>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 w-14">Début</span>
+                  <input
+                    type="time"
+                    className={UI.input}
+                    value={s.start_time}
+                    onChange={(e) => setSlot(d.weekday, { start_time: e.target.value })}
+                    disabled={!s.enabled}
+                  />
+                </div>
+
+                <div className="hidden sm:block text-slate-400">→</div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 w-14">Fin</span>
+                  <input
+                    type="time"
+                    className={UI.input}
+                    value={s.end_time}
+                    onChange={(e) => setSlot(d.weekday, { end_time: e.target.value })}
+                    disabled={!s.enabled}
+                  />
+                </div>
+
+                <div className="sm:ml-auto">
+                  <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => copyToAll(d.weekday)}>
+                    Copier → Tous
+                  </button>
+                </div>
+              </div>
+
+              <div className="sm:w-[180px]">
+                <div className="h-3 rounded-full bg-slate-100 overflow-hidden border border-slate-200/70">
+                  <div
+                    className={["h-full", s.enabled ? "bg-violet-600/70" : "bg-slate-300/60"].join(" ")}
+                    style={{ width: s.enabled ? "100%" : "25%" }}
+                  />
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {s.enabled ? `${s.start_time} → ${s.end_time}` : "Désactivé"}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-2">
+        <button type="button" className={`${UI.btnBase} ${UI.btnPrimary}`} onClick={() => void save()} disabled={saving}>
+          {saving ? "Enregistrement…" : "Enregistrer"}
+        </button>
+        <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={() => void load()} disabled={loading}>
+          {loading ? "…" : "Recharger"}
+        </button>
+      </div>
+    </div>
   );
 }
