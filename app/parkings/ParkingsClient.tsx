@@ -144,6 +144,7 @@ function computeNextUsefulWindow() {
   }
 
   const end = new Date(start.getTime() + 60 * 60 * 1000);
+
   return {
     startIso: start.toISOString(),
     endIso: end.toISOString(),
@@ -166,9 +167,7 @@ export default function ParkingsClient({
 }: {
   initialRows?: ParkingRow[];
 }) {
-  const [rows, setRows] = useState<ParkingRow[]>(
-    normalizeRows(initialRows) ?? []
-  );
+  const [rows, setRows] = useState<ParkingRow[]>(normalizeRows(initialRows) ?? []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -188,9 +187,7 @@ export default function ParkingsClient({
   const didMountRef = useRef(false);
 
   // Dispo par id
-  const [availabilityById, setAvailabilityById] = useState<
-    Record<string, AvState>
-  >({});
+  const [availabilityById, setAvailabilityById] = useState<Record<string, AvState>>({});
 
   // runId anti-retours obsolètes
   const runIdRef = useRef(0);
@@ -260,8 +257,7 @@ export default function ParkingsClient({
   }, [rows, q, type, covered, secure, lit, ev]);
 
   const onTypeChange = (v: string) => {
-    if (v === "all" || v === "outdoor" || v === "indoor" || v === "garage")
-      setType(v);
+    if (v === "all" || v === "outdoor" || v === "indoor" || v === "garage") setType(v);
   };
 
   const updatedLabel = useMemo(() => {
@@ -272,10 +268,15 @@ export default function ParkingsClient({
     return `Mis à jour à ${hh}:${mm}`;
   }, [lastUpdatedAt]);
 
-  // ✅ IMPORTANT: pas d'objet "windowInfo" dans deps de useEffect
-  const { startIso, endIso, label: windowLabel } = useMemo(() => {
+  // windowInfo stable via memo
+  const windowInfo = useMemo(() => {
     return availableNow ? computeNowWindow() : computeNextUsefulWindow();
   }, [availableNow]);
+
+  // ✅ FIX LINT: on extrait des dépendances primitives
+  const windowStartIso = windowInfo.startIso;
+  const windowEndIso = windowInfo.endIso;
+  const windowLabel = windowInfo.label;
 
   // ✅ Check disponibilité pour les cards visibles
   useEffect(() => {
@@ -284,7 +285,6 @@ export default function ParkingsClient({
     runIdRef.current += 1;
     const myRunId = runIdRef.current;
 
-    // On met checking mais ON NE GRISE PAS pendant checking
     setAvailabilityById((prev) => {
       const next: Record<string, AvState> = { ...prev };
       for (const p of filtered) next[p.id] = { state: "checking" };
@@ -306,28 +306,21 @@ export default function ParkingsClient({
           try {
             const url = `/api/bookings/availability?parkingId=${encodeURIComponent(
               p.id
-            )}&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(
-              endIso
-            )}`;
+            )}&start=${encodeURIComponent(windowStartIso)}&end=${encodeURIComponent(windowEndIso)}`;
 
             const res = await fetch(url, { signal: controller.signal });
-            const json: AvailApiOk | AvailApiErr = await res
-              .json()
-              .catch(() => ({}));
+            const json: AvailApiOk | AvailApiErr = await res.json().catch(() => ({}));
 
             if (runIdRef.current !== myRunId) return;
 
             if (!res.ok) {
-              const msg =
-                extractReason(json) ?? `Erreur disponibilité (${res.status})`;
-              setAvailabilityById((prev) => ({
-                ...prev,
-                [p.id]: { state: "error", message: msg },
-              }));
+              const msg = extractReason(json) ?? `Erreur disponibilité (${res.status})`;
+              setAvailabilityById((prev) => ({ ...prev, [p.id]: { state: "error", message: msg } }));
               continue;
             }
 
             const ok = json as AvailApiOk;
+
             setAvailabilityById((prev) => ({
               ...prev,
               [p.id]: ok.available
@@ -339,24 +332,17 @@ export default function ParkingsClient({
             if (runIdRef.current !== myRunId) return;
 
             const msg = e instanceof Error ? e.message : "Erreur inconnue";
-            setAvailabilityById((prev) => ({
-              ...prev,
-              [p.id]: { state: "error", message: msg },
-            }));
+            setAvailabilityById((prev) => ({ ...prev, [p.id]: { state: "error", message: msg } }));
           }
         }
       };
 
-      await Promise.all(
-        Array.from({ length: Math.min(concurrency, filtered.length) }, () =>
-          worker()
-        )
-      );
+      await Promise.all(Array.from({ length: Math.min(concurrency, filtered.length) }, () => worker()));
     };
 
     void run();
     return () => controller.abort();
-  }, [filtered, startIso, endIso]);
+  }, [filtered, windowStartIso, windowEndIso]);
 
   return (
     <main className={UI.page}>
@@ -366,22 +352,16 @@ export default function ParkingsClient({
           <div>
             <h1 className={UI.h1}>Trouver une place</h1>
             <p className={[UI.p, "mt-2"].join(" ")}>
-              Recherche par rue / ville + filtres utiles (couverte, sécurisée,
-              éclairée…)
+              Recherche par rue / ville + filtres utiles (couverte, sécurisée, éclairée…)
             </p>
-            {updatedLabel ? (
-              <p className={[UI.subtle, "mt-1"].join(" ")}>{updatedLabel}</p>
-            ) : null}
+            {updatedLabel ? <p className={[UI.subtle, "mt-1"].join(" ")}>{updatedLabel}</p> : null}
           </div>
 
           <div className="flex gap-2">
             <Link href="/map" className={[UI.btnBase, UI.btnGhost].join(" ")}>
               Vue carte
             </Link>
-            <Link
-              href="/parkings/new"
-              className={[UI.btnBase, UI.btnPrimary].join(" ")}
-            >
+            <Link href="/parkings/new" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
               Proposer
             </Link>
           </div>
@@ -391,9 +371,7 @@ export default function ParkingsClient({
         <section className={[UI.card, UI.cardPad, "mt-6"].join(" ")}>
           <div className="grid gap-3 md:grid-cols-4">
             <div className="md:col-span-2">
-              <label className="text-xs font-medium text-slate-700">
-                Recherche
-              </label>
+              <label className="text-xs font-medium text-slate-700">Recherche</label>
               <input
                 className={[UI.input, "mt-1"].join(" ")}
                 placeholder="Rue, numéro, code postal, ville…"
@@ -420,9 +398,7 @@ export default function ParkingsClient({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-700">
-                Couverture
-              </label>
+              <label className="text-xs font-medium text-slate-700">Couverture</label>
               <select
                 className={[UI.select, "mt-1"].join(" ")}
                 value={covered}
@@ -441,10 +417,7 @@ export default function ParkingsClient({
           <div className="mt-4 flex flex-wrap gap-2 items-center">
             <button
               type="button"
-              className={[
-                UI.btnBase,
-                secure ? UI.btnPrimary : UI.btnGhost,
-              ].join(" ")}
+              className={[UI.btnBase, secure ? UI.btnPrimary : UI.btnGhost].join(" ")}
               onClick={() => setSecure((v) => !v)}
             >
               🔒 Sécurisée
@@ -452,10 +425,7 @@ export default function ParkingsClient({
 
             <button
               type="button"
-              className={[
-                UI.btnBase,
-                lit ? UI.btnPrimary : UI.btnGhost,
-              ].join(" ")}
+              className={[UI.btnBase, lit ? UI.btnPrimary : UI.btnGhost].join(" ")}
               onClick={() => setLit((v) => !v)}
             >
               💡 Éclairée
@@ -463,9 +433,7 @@ export default function ParkingsClient({
 
             <button
               type="button"
-              className={[UI.btnBase, ev ? UI.btnPrimary : UI.btnGhost].join(
-                " "
-              )}
+              className={[UI.btnBase, ev ? UI.btnPrimary : UI.btnGhost].join(" ")}
               onClick={() => setEv((v) => !v)}
             >
               ⚡ Borne EV
@@ -510,17 +478,13 @@ export default function ParkingsClient({
           </div>
         </section>
 
-        {error ? (
-          <p className="mt-4 text-sm text-rose-600">Erreur : {error}</p>
-        ) : null}
+        {error ? <p className="mt-4 text-sm text-rose-600">Erreur : {error}</p> : null}
 
         {/* Results */}
         <section className="mt-6">
           <div className="flex items-center justify-between">
             <div className="text-sm text-slate-600">
-              {loading && rows.length === 0
-                ? "Chargement…"
-                : `${filtered.length} place(s) trouvée(s)`}
+              {loading && rows.length === 0 ? "Chargement…" : `${filtered.length} place(s) trouvée(s)`}
             </div>
           </div>
 
@@ -530,7 +494,6 @@ export default function ParkingsClient({
 
               const av = availabilityById[p.id] ?? ({ state: "checking" } as const);
 
-              // ✅ on grise UNIQUEMENT si indisponible confirmé
               const unavailable = av.state === "unavailable";
               const unavailableReason = unavailable ? normalizeReason(av.reason) : "";
 
@@ -538,12 +501,7 @@ export default function ParkingsClient({
                 <Link
                   key={p.id}
                   href={`/parkings/${p.id}`}
-                  className={cx(
-                    UI.card,
-                    UI.cardHover,
-                    "block overflow-hidden relative",
-                    unavailable ? "opacity-60 grayscale" : ""
-                  )}
+                  className={cx(UI.card, UI.cardHover, "block overflow-hidden relative")}
                   title={
                     av.state === "unavailable"
                       ? unavailableReason
@@ -552,112 +510,98 @@ export default function ParkingsClient({
                       : ""
                   }
                 >
-                  {/* Badge overlay très visible */}
+                  {/* Overlays NON grisés */}
                   {unavailable ? (
-                    <div className="absolute top-3 left-3 z-10">
-                      <span className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg">
-                        {labelFromReason(unavailableReason)}
-                      </span>
-                    </div>
-                  ) : null}
-
-                  <div className="w-full h-40 bg-slate-100 relative">
-                    {photo ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={photo}
-                        alt=""
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
-                        Aucune photo
+                    <>
+                      <div className="absolute top-3 left-3 z-20">
+                        <span className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg">
+                          {labelFromReason(unavailableReason)}
+                        </span>
                       </div>
-                    )}
 
-                    {/* Bandeau rouge bas sur photo */}
-                    {unavailable ? (
-                      <div className="absolute inset-x-0 bottom-0 z-10">
+                      <div className="absolute left-0 right-0 top-40 z-20 -translate-y-full">
                         <div className="bg-rose-600/95 text-white text-xs font-semibold px-3 py-2">
                           ❌ Indisponible — {unavailableReason}
                         </div>
                       </div>
-                    ) : null}
-                  </div>
+                    </>
+                  ) : null}
 
-                  <div className={UI.cardPad}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-semibold text-slate-900 truncate">
-                          {p.title}
+                  {/* Contenu grisé uniquement si indisponible */}
+                  <div className={cx(unavailable ? "opacity-60 grayscale" : "")}>
+                    <div className="w-full h-40 bg-slate-100">
+                      {photo ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={photo} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                          Aucune photo
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {formatAddress(p) || "Adresse non renseignée"}
+                      )}
+                    </div>
+
+                    <div className={UI.cardPad}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900 truncate">{p.title}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {formatAddress(p) || "Adresse non renseignée"}
+                          </div>
+                        </div>
+
+                        <div className="shrink-0 text-right">
+                          {p.price_hour !== null ? (
+                            <div className="text-sm font-semibold text-slate-900">{p.price_hour} CHF/h</div>
+                          ) : (
+                            <div className="text-sm text-slate-400">—</div>
+                          )}
+                          {p.price_day !== null ? (
+                            <div className="text-xs text-slate-500">{p.price_day} CHF/j</div>
+                          ) : null}
                         </div>
                       </div>
 
-                      <div className="shrink-0 text-right">
-                        {p.price_hour !== null ? (
-                          <div className="text-sm font-semibold text-slate-900">
-                            {p.price_hour} CHF/h
-                          </div>
-                        ) : (
-                          <div className="text-sm text-slate-400">—</div>
-                        )}
-                        {p.price_day !== null ? (
-                          <div className="text-xs text-slate-500">
-                            {p.price_day} CHF/j
-                          </div>
-                        ) : null}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <span className={UI.chip}>{toTypeLabel(p.parking_type)}</span>
+                        <span className={UI.chip}>{p.is_covered ? "Couverte" : "Non couverte"}</span>
+                        {p.is_secure ? <span className={UI.chip}>🔒</span> : null}
+                        {p.is_lit ? <span className={UI.chip}>💡</span> : null}
+                        {p.has_ev_charger ? <span className={UI.chip}>⚡ EV</span> : null}
                       </div>
-                    </div>
 
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <span className={UI.chip}>
-                        {toTypeLabel(p.parking_type)}
-                      </span>
-                      <span className={UI.chip}>
-                        {p.is_covered ? "Couverte" : "Non couverte"}
-                      </span>
-                      {p.is_secure ? <span className={UI.chip}>🔒</span> : null}
-                      {p.is_lit ? <span className={UI.chip}>💡</span> : null}
-                      {p.has_ev_charger ? (
-                        <span className={UI.chip}>⚡ EV</span>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between">
-                      <span
-                        className={cx(
-                          UI.chip,
-                          av.state === "available"
-                            ? "font-medium text-emerald-700"
+                      <div className="mt-4 flex items-center justify-between">
+                        <span
+                          className={cx(
+                            UI.chip,
+                            av.state === "available"
+                              ? "font-medium text-emerald-700"
+                              : av.state === "unavailable"
+                              ? "font-medium text-rose-700"
+                              : av.state === "error"
+                              ? "font-medium text-amber-700"
+                              : "text-slate-600"
+                          )}
+                        >
+                          {av.state === "checking"
+                            ? "Vérification…"
+                            : av.state === "available"
+                            ? "Disponible"
                             : av.state === "unavailable"
-                            ? "font-medium text-rose-700"
-                            : av.state === "error"
-                            ? "font-medium text-amber-700"
-                            : "text-slate-600"
-                        )}
-                      >
-                        {av.state === "checking"
-                          ? "Vérification…"
-                          : av.state === "available"
-                          ? "Disponible"
-                          : av.state === "unavailable"
-                          ? "Indisponible"
-                          : "Disponibilité inconnue"}
-                      </span>
+                            ? "Indisponible"
+                            : "Disponibilité inconnue"}
+                        </span>
 
-                      <span
-                        className={cx(
-                          UI.btnBase,
-                          UI.btnPrimary,
-                          "px-3 py-1.5 text-xs rounded-full pointer-events-none",
-                          unavailable ? "opacity-70" : ""
-                        )}
-                      >
-                        Détails
-                      </span>
+                        <span
+                          className={cx(
+                            UI.btnBase,
+                            UI.btnPrimary,
+                            "px-3 py-1.5 text-xs rounded-full pointer-events-none",
+                            unavailable ? "opacity-70" : ""
+                          )}
+                        >
+                          Détails
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </Link>
@@ -675,8 +619,8 @@ export default function ParkingsClient({
           </div>
 
           <div className="mt-4 text-xs text-slate-500">
-            * “Disponible / Indisponible” correspond à un check{" "}
-            <b>{windowLabel}</b> (planning propriétaire, blackouts, réservations).
+            * “Disponible / Indisponible” correspond à un check <b>{windowLabel}</b> (planning propriétaire, blackouts,
+            réservations).
           </div>
         </section>
       </div>
