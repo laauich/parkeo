@@ -17,16 +17,8 @@ function getBearerToken(req: Request) {
   return auth.slice(7);
 }
 
-type SlotRow = {
-  weekday: number;
-  start_time: string; // "HH:MM:SS" (postgres time)
-  end_time: string;
-  enabled: boolean;
-};
-
-function toHHMM(t: string) {
-  // "HH:MM:SS" -> "HH:MM"
-  return typeof t === "string" && t.length >= 5 ? t.slice(0, 5) : t;
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
 export async function GET(req: Request) {
@@ -39,9 +31,14 @@ export async function GET(req: Request) {
     if (!token) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
     const url = new URL(req.url);
-    const parkingId = (url.searchParams.get("parkingId") || "").trim();
-    if (!parkingId) return NextResponse.json({ ok: false, error: "parkingId manquant" }, { status: 400 });
+    const parkingIdRaw = (url.searchParams.get("parkingId") || "").trim();
 
+    // ✅ FIX IMPORTANT: refuse "undefined"
+    if (!parkingIdRaw || parkingIdRaw === "undefined" || !isUuid(parkingIdRaw)) {
+      return NextResponse.json({ ok: false, error: "parkingId invalide" }, { status: 400 });
+    }
+
+    // user
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false },
@@ -50,36 +47,32 @@ export async function GET(req: Request) {
     const { data: u, error: uErr } = await supabaseAuth.auth.getUser();
     if (uErr || !u.user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
+    const userId = u.user.id;
+
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
+    // ✅ verify owner
     const { data: p, error: pErr } = await admin
       .from("parkings")
       .select("id,owner_id")
-      .eq("id", parkingId)
+      .eq("id", parkingIdRaw)
       .maybeSingle();
 
     if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
     if (!p) return NextResponse.json({ ok: false, error: "Parking introuvable" }, { status: 404 });
-    if ((p as { owner_id: string }).owner_id !== u.user.id) {
+    if ((p as { owner_id: string }).owner_id !== userId) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const { data: rows, error: aErr } = await admin
+    const { data: slots, error: slErr } = await admin
       .from("parking_availability")
       .select("weekday,start_time,end_time,enabled")
-      .eq("parking_id", parkingId)
+      .eq("parking_id", parkingIdRaw)
       .order("weekday", { ascending: true });
 
-    if (aErr) return NextResponse.json({ ok: false, error: aErr.message }, { status: 500 });
+    if (slErr) return NextResponse.json({ ok: false, error: slErr.message }, { status: 500 });
 
-    const slots = ((rows ?? []) as SlotRow[]).map((r) => ({
-      weekday: r.weekday,
-      start_time: toHHMM(r.start_time),
-      end_time: toHHMM(r.end_time),
-      enabled: Boolean(r.enabled),
-    }));
-
-    return NextResponse.json({ ok: true, slots }, { status: 200 });
+    return NextResponse.json({ ok: true, slots: slots ?? [] }, { status: 200 });
   } catch (e: unknown) {
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "Server error" },
