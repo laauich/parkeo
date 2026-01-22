@@ -254,7 +254,9 @@ export default function MyParkingsPage() {
             <Link href="/parkings/new" className={Btn.primary}>
               + Proposer une place
             </Link>
-
+ <Link href="/my-parkings/calendar" className={Btn.ghost}>
+    📅 Calendrier
+  </Link>
             <button
               type="button"
               onClick={() => {
@@ -451,17 +453,12 @@ export default function MyParkingsPage() {
                 <h2 className={UI.h2}>Aucune place pour le moment</h2>
                 <p className={UI.p}>Crée ta première annonce (photos + carte + options).</p>
                 <div className="flex flex-wrap gap-2">
-                   <Link href="/my-parkings/calendar" className={Btn.ghost}>
-    📅 Calendrier
-  </Link>
-
-  <Link href="/parkings/new" className={Btn.primary}>
-    + Proposer une place
-  </Link>
-
-  <Link href="/map" className={Btn.ghost}>
-    Voir la carte
-  </Link>
+                  <Link href="/parkings/new" className={Btn.primary}>
+                    + Proposer une place
+                  </Link>
+                  <Link href="/map" className={Btn.ghost}>
+                    Voir la carte
+                  </Link>
                 </div>
               </div>
             )}
@@ -471,3 +468,4 @@ export default function MyParkingsPage() {
     </main>
   );
 }
+

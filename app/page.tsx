@@ -578,7 +578,7 @@ export default async function HomePage() {
                 a="Oui. Certaines places proposent un tarif journalier (affiché sur la fiche)."
               />
               <FAQItem
-                q="Je suis propriétaire : comment proposer ma place ?"
+                q="Je suis propriétaire : comment a place ?"
                 a="Cliquez sur “Proposer ma place”, ajoutez l’adresse, la localisation sur la carte et des photos. Votre annonce apparaît ensuite sur Parkeo."
               />
               <FAQItem
