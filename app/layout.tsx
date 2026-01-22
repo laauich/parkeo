@@ -4,6 +4,11 @@ import type { Metadata } from "next";
 import NavbarClient from "./components/NavbarClient";
 import { AuthProvider } from "./providers/AuthProvider";
 
+// ⚠️ Supprimé: FullCalendar CSS imports
+// import "@fullcalendar/core/index.css";
+// import "@fullcalendar/daygrid/index.css";
+// import "@fullcalendar/timegrid/index.css";
+
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.ch";
 
