@@ -6,13 +6,16 @@
  * - Ne casse pas ta structure: tes sections "À venir" + "Historique" restent identiques
  * - On ajoute juste un bloc "Calendrier" au-dessus + un drawer wow au clic d’un event
  *
- * ⚠️ Dépendances (si pas déjà installées) :
+ * ⚠️ Dépendances :
  * npm i @fullcalendar/react @fullcalendar/daygrid @fullcalendar/timegrid @fullcalendar/interaction
+ *
+ * ⚠️ IMPORTANT (pour éviter tes erreurs TypeScript) :
+ * EventClickArg vient de "@fullcalendar/core" (PAS "@fullcalendar/interaction")
  */
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 import ConfirmModal from "@/app/components/ConfirmModal";
@@ -161,10 +164,7 @@ function ownerSummary(b: BookingRow) {
       badge: "Remboursement ✅",
       tone: "warning" as const,
       title: "Le client sera remboursé",
-      text: `Annulation propriétaire : remboursement automatique de ${money(
-        b.total_price,
-        b.currency
-      )}.`,
+      text: `Annulation propriétaire : remboursement automatique de ${money(b.total_price, b.currency)}.`,
     };
   }
   return {
@@ -321,9 +321,7 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
   const upcoming = useMemo(
     () =>
       filteredRows.filter(
-        (b) =>
-          new Date(b.end_time).getTime() > nowMs &&
-          (b.status ?? "").toLowerCase() !== "cancelled"
+        (b) => new Date(b.end_time).getTime() > nowMs && (b.status ?? "").toLowerCase() !== "cancelled"
       ),
     [filteredRows, nowMs]
   );
@@ -331,9 +329,7 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
   const past = useMemo(
     () =>
       filteredRows.filter(
-        (b) =>
-          new Date(b.end_time).getTime() <= nowMs ||
-          (b.status ?? "").toLowerCase() === "cancelled"
+        (b) => new Date(b.end_time).getTime() <= nowMs || (b.status ?? "").toLowerCase() === "cancelled"
       ),
     [filteredRows, nowMs]
   );
@@ -484,8 +480,57 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
 
   return (
     <div className="space-y-6">
-      {/* ✅ Styles calendrier (couleurs d’events) */}
+      {/* ✅ Styles calendrier (couleurs d’events + base CSS minimale pour éviter un rendu “cassé” sans imports CSS du package) */}
       <style jsx global>{`
+        /* Base minimal FullCalendar (évite un rendu éclaté si tu n'importes pas les CSS du package) */
+        .fc {
+          font-family: inherit;
+        }
+        .fc *,
+        .fc *::before,
+        .fc *::after {
+          box-sizing: border-box;
+        }
+        .fc table {
+          border-collapse: collapse;
+          border-spacing: 0;
+          width: 100%;
+        }
+        .fc .fc-scrollgrid,
+        .fc .fc-scrollgrid table {
+          border: 1px solid rgba(226, 232, 240, 1);
+          border-radius: 16px;
+          overflow: hidden;
+          background: rgba(255, 255, 255, 0.6);
+        }
+        .fc .fc-col-header-cell,
+        .fc .fc-daygrid-day,
+        .fc .fc-timegrid-slot {
+          border-color: rgba(226, 232, 240, 1);
+        }
+        .fc .fc-col-header-cell-cushion,
+        .fc .fc-daygrid-day-number {
+          padding: 8px;
+          text-decoration: none;
+        }
+        .fc .fc-timegrid-slot-label {
+          padding: 0 8px;
+        }
+        .fc .fc-event {
+          border-radius: 12px;
+          padding: 2px;
+          cursor: pointer;
+        }
+        .fc .fc-event .fc-event-main {
+          border-radius: 12px;
+          padding: 6px 8px;
+          font-weight: 600;
+        }
+        .fc .fc-event-time {
+          font-weight: 700;
+        }
+
+        /* Couleurs selon statut */
         .evt-confirmed .fc-event-main {
           background: rgba(16, 185, 129, 0.16) !important;
           border: 1px solid rgba(16, 185, 129, 0.35) !important;
@@ -508,9 +553,11 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
           border: 1px solid rgba(148, 163, 184, 0.35) !important;
           color: #334155 !important;
         }
-        /* Garder un look clean, proche de ton UI */
-        .fc {
-          font-family: inherit;
+
+        /* Toolbar style proche de ton UI */
+        .fc .fc-toolbar {
+          gap: 12px;
+          padding: 6px 0;
         }
         .fc .fc-toolbar-title {
           font-size: 1rem;
@@ -523,6 +570,7 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
           background: rgba(255, 255, 255, 0.8) !important;
           color: #0f172a !important;
           padding: 0.5rem 0.8rem !important;
+          box-shadow: none !important;
         }
         .fc .fc-button:hover {
           filter: brightness(0.98);
@@ -602,8 +650,7 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
                   <b className="text-slate-900">{money(drawerBooking.total_price, drawerBooking.currency)}</b>
                 </div>
                 <div className="text-xs text-slate-500 pt-1">
-                  Paiement :{" "}
-                  <span className="font-medium text-slate-900">{drawerBooking.payment_status}</span>
+                  Paiement : <span className="font-medium text-slate-900">{drawerBooking.payment_status}</span>
                 </div>
               </div>
             </div>
@@ -647,7 +694,8 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
             </div>
 
             <div className="pt-2 text-xs text-slate-500 border-t border-slate-200/70">
-              Remarque : l’annulation propriétaire déclenche un remboursement automatique uniquement si la réservation est payée.
+              Remarque : l’annulation propriétaire déclenche un remboursement automatique uniquement si la réservation est
+              payée.
             </div>
           </div>
         )}
@@ -793,9 +841,7 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
               <div className={UI.cardPad}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="font-semibold text-slate-900 truncate">
-                      {parking?.title ?? "Ma place"}
-                    </div>
+                    <div className="font-semibold text-slate-900 truncate">{parking?.title ?? "Ma place"}</div>
                     <div className="mt-1 text-xs text-slate-600 line-clamp-2">
                       {parking?.address ?? "Adresse non renseignée"}
                     </div>
@@ -876,9 +922,7 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
 
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <div className="font-semibold text-slate-900 truncate">
-                      {parking?.title ?? "Ma place"}
-                    </div>
+                    <div className="font-semibold text-slate-900 truncate">{parking?.title ?? "Ma place"}</div>
                     <StatusChip b={b} />
                   </div>
 
@@ -978,8 +1022,7 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
             </div>
 
             <div className="text-xs text-slate-500">
-              Paiement :{" "}
-              <span className="font-medium text-slate-900">{openBooking.payment_status}</span>
+              Paiement : <span className="font-medium text-slate-900">{openBooking.payment_status}</span>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 pt-2">
