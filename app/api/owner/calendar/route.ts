@@ -1,3 +1,4 @@
+// app/api/owner/calandar/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -20,7 +21,13 @@ function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
-type DbBooking = {
+type ParkingJoin = {
+  id: string;
+  title: string | null;
+  owner_id: string;
+};
+
+type RawBooking = {
   id: string;
   parking_id: string | null;
   start_time: string;
@@ -29,11 +36,9 @@ type DbBooking = {
   payment_status: string | null;
   total_price: string | number;
   currency: string | null;
-  parkings?: {
-    id: string;
-    title: string | null;
-    owner_id: string;
-  } | null;
+
+  // ✅ IMPORTANT: Supabase join peut renvoyer objet OU tableau
+  parkings: ParkingJoin | ParkingJoin[] | null;
 };
 
 export async function GET(req: Request) {
@@ -100,10 +105,14 @@ export async function GET(req: Request) {
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
-    const rows = (data ?? []) as DbBooking[];
+    const rows = (data ?? []) as unknown as RawBooking[];
 
     const events = rows.map((b) => {
-      const parkingTitle = b.parkings?.title ?? "Place";
+      // ✅ normalise join Supabase (objet vs tableau)
+      const parking =
+        Array.isArray(b.parkings) ? (b.parkings[0] ?? null) : (b.parkings ?? null);
+
+      const parkingTitle = parking?.title ?? "Place";
       const st = b.status ?? "unknown";
       const pay = b.payment_status ?? "unknown";
       const cur = (b.currency ?? "chf").toUpperCase();

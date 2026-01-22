@@ -1,12 +1,27 @@
 // app/my-parkings/[id]/bookings/bookings-client.tsx
 "use client";
 
+/**
+ * ✅ Calendar + filtres + couleurs + drawer
+ * - Ne casse pas ta structure: tes sections "À venir" + "Historique" restent identiques
+ * - On ajoute juste un bloc "Calendrier" au-dessus + un drawer wow au clic d’un event
+ *
+ * ⚠️ Dépendances (si pas déjà installées) :
+ * npm i @fullcalendar/react @fullcalendar/daygrid @fullcalendar/timegrid @fullcalendar/interaction
+ */
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { UI } from "@/app/components/ui";
 import ConfirmModal from "@/app/components/ConfirmModal";
+
+import FullCalendar from "@fullcalendar/react";
+import dayGridPlugin from "@fullcalendar/daygrid";
+import timeGridPlugin from "@fullcalendar/timegrid";
+import interactionPlugin from "@fullcalendar/interaction";
+import type { EventClickArg } from "@fullcalendar/core";
 
 type BookingRow = {
   id: string;
@@ -79,6 +94,33 @@ function firstPhotoUrl(photos: string[]): string | null {
   return u || null;
 }
 
+function statusKey(b: BookingRow) {
+  const s = (b.status ?? "").toLowerCase();
+  const pay = (b.payment_status ?? "").toLowerCase();
+
+  if (s === "cancelled") return "cancelled";
+  if (s.includes("pending") || pay === "unpaid") return "pending";
+  if (s === "confirmed" && pay === "paid") return "confirmed";
+  if (s === "confirmed") return "confirmed";
+  return "other";
+}
+
+function statusLabel(b: BookingRow) {
+  const k = statusKey(b);
+  if (k === "confirmed") return "Confirmée";
+  if (k === "pending") return "En attente";
+  if (k === "cancelled") return "Annulée";
+  return b.status ?? "—";
+}
+
+function eventClassName(b: BookingRow) {
+  const k = statusKey(b);
+  if (k === "confirmed") return "evt-confirmed";
+  if (k === "pending") return "evt-pending";
+  if (k === "cancelled") return "evt-cancelled";
+  return "evt-other";
+}
+
 function StatusChip({ b }: { b: BookingRow }) {
   const s = (b.status ?? "").toLowerCase();
   const pay = (b.payment_status ?? "").toLowerCase();
@@ -108,7 +150,7 @@ function StatusChip({ b }: { b: BookingRow }) {
 }
 
 /**
- * Modalités pour owner (comme côté client -> popup #2):
+ * Modalités pour owner:
  * - si payé => remboursement
  * - sinon => simple annulation
  */
@@ -133,6 +175,61 @@ function ownerSummary(b: BookingRow) {
   };
 }
 
+type Filter = "all" | "confirmed" | "pending" | "cancelled";
+
+function matchesFilter(b: BookingRow, f: Filter) {
+  if (f === "all") return true;
+  return statusKey(b) === f;
+}
+
+function WowDrawer({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50">
+      {/* overlay */}
+      <button
+        type="button"
+        aria-label="Fermer"
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      {/* panel */}
+      <div className="absolute right-0 top-0 h-full w-full sm:w-[520px] bg-white shadow-2xl border-l border-slate-200/70">
+        <div className="p-5 border-b border-slate-200/70 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs text-slate-500">Réservation</div>
+            <div className="text-lg font-semibold text-slate-900 truncate">{title}</div>
+          </div>
+          <button type="button" className={`${UI.btnBase} ${UI.btnGhost}`} onClick={onClose}>
+            Fermer
+          </button>
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function BookingsClient({ parkingId }: { parkingId: string }) {
   const { ready, session, supabase } = useAuth();
   const router = useRouter();
@@ -141,14 +238,21 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // infos parking (photo, titre, adresse) pour faire les cards comme côté client
+  // infos parking (photo, titre, adresse)
   const [parking, setParking] = useState<ParkingJoin | null>(null);
 
   // chat state
   const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
 
-  // popup #1: détails
+  // popup #1: détails (déjà existant)
   const [openBooking, setOpenBooking] = useState<BookingRow | null>(null);
+
+  // ✅ drawer calendrier (wow)
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerBooking, setDrawerBooking] = useState<BookingRow | null>(null);
+
+  // ✅ filtre (utilisé pour calendar + listes)
+  const [filter, setFilter] = useState<Filter>("all");
 
   // popup #2: confirm annulation + modalités
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -212,24 +316,26 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
     return () => clearInterval(t);
   }, []);
 
+  const filteredRows = useMemo(() => rows.filter((b) => matchesFilter(b, filter)), [rows, filter]);
+
   const upcoming = useMemo(
     () =>
-      rows.filter(
+      filteredRows.filter(
         (b) =>
           new Date(b.end_time).getTime() > nowMs &&
           (b.status ?? "").toLowerCase() !== "cancelled"
       ),
-    [rows, nowMs]
+    [filteredRows, nowMs]
   );
 
   const past = useMemo(
     () =>
-      rows.filter(
+      filteredRows.filter(
         (b) =>
           new Date(b.end_time).getTime() <= nowMs ||
           (b.status ?? "").toLowerCase() === "cancelled"
       ),
-    [rows, nowMs]
+    [filteredRows, nowMs]
   );
 
   const openChat = async (bookingId: string) => {
@@ -318,10 +424,15 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
       await load();
       setLoading(false);
       setConfirmOpen(false);
-      setPendingCancel(null);
 
       // si on était dans le popup détails, on le ferme
       setOpenBooking((prev) => (prev?.id === pendingCancel.id ? null : prev));
+
+      // si on était dans le drawer, on le ferme aussi
+      setDrawerBooking((prev) => (prev?.id === pendingCancel.id ? null : prev));
+      setDrawerOpen(false);
+
+      setPendingCancel(null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Erreur inconnue");
       setLoading(false);
@@ -342,8 +453,91 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
   const photos = parsePhotos(parking?.photos ?? null);
   const photo = firstPhotoUrl(photos);
 
+  // ✅ Events calendar (sur filteredRows)
+  const calendarEvents = useMemo(() => {
+    return filteredRows.map((b) => {
+      return {
+        id: b.id,
+        title: `${statusLabel(b)} · ${money(b.total_price, b.currency)}`,
+        start: b.start_time,
+        end: b.end_time,
+        classNames: [eventClassName(b)],
+        extendedProps: { booking: b },
+      };
+    });
+  }, [filteredRows]);
+
+  const onEventClick = (arg: EventClickArg) => {
+    const b = (arg.event.extendedProps as { booking?: BookingRow }).booking ?? null;
+    if (!b) return;
+    setDrawerBooking(b);
+    setDrawerOpen(true);
+  };
+
+  const counts = useMemo(() => {
+    const all = rows.length;
+    const confirmed = rows.filter((b) => statusKey(b) === "confirmed").length;
+    const pending = rows.filter((b) => statusKey(b) === "pending").length;
+    const cancelled = rows.filter((b) => statusKey(b) === "cancelled").length;
+    return { all, confirmed, pending, cancelled };
+  }, [rows]);
+
   return (
     <div className="space-y-6">
+      {/* ✅ Styles calendrier (couleurs d’events) */}
+      <style jsx global>{`
+        .evt-confirmed .fc-event-main {
+          background: rgba(16, 185, 129, 0.16) !important;
+          border: 1px solid rgba(16, 185, 129, 0.35) !important;
+          color: #065f46 !important;
+        }
+        .evt-pending .fc-event-main {
+          background: rgba(245, 158, 11, 0.16) !important;
+          border: 1px solid rgba(245, 158, 11, 0.35) !important;
+          color: #92400e !important;
+        }
+        .evt-cancelled .fc-event-main {
+          background: rgba(100, 116, 139, 0.16) !important;
+          border: 1px solid rgba(100, 116, 139, 0.28) !important;
+          color: #334155 !important;
+          text-decoration: line-through;
+          opacity: 0.9;
+        }
+        .evt-other .fc-event-main {
+          background: rgba(148, 163, 184, 0.16) !important;
+          border: 1px solid rgba(148, 163, 184, 0.35) !important;
+          color: #334155 !important;
+        }
+        /* Garder un look clean, proche de ton UI */
+        .fc {
+          font-family: inherit;
+        }
+        .fc .fc-toolbar-title {
+          font-size: 1rem;
+          font-weight: 700;
+          color: #0f172a;
+        }
+        .fc .fc-button {
+          border-radius: 9999px !important;
+          border: 1px solid rgba(226, 232, 240, 1) !important;
+          background: rgba(255, 255, 255, 0.8) !important;
+          color: #0f172a !important;
+          padding: 0.5rem 0.8rem !important;
+        }
+        .fc .fc-button:hover {
+          filter: brightness(0.98);
+        }
+        .fc .fc-button-primary:not(:disabled).fc-button-active {
+          box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15) !important;
+          border-color: rgba(139, 92, 246, 0.35) !important;
+        }
+        .fc .fc-timegrid-slot-label,
+        .fc .fc-col-header-cell-cushion,
+        .fc .fc-daygrid-day-number {
+          color: #475569;
+        }
+      `}</style>
+
       {/* Popup #2: modalités remboursement + confirmation */}
       <ConfirmModal
         open={confirmOpen}
@@ -362,6 +556,102 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
         }}
         onConfirm={doCancelOwner}
       />
+
+      {/* ✅ Drawer wow: click event calendrier */}
+      <WowDrawer
+        open={drawerOpen}
+        onClose={() => {
+          setDrawerOpen(false);
+          setDrawerBooking(null);
+        }}
+        title={drawerBooking ? `${parking?.title ?? "Ma place"} — ${statusLabel(drawerBooking)}` : "Détails"}
+      >
+        {!drawerBooking ? (
+          <p className={UI.p}>Aucune réservation sélectionnée.</p>
+        ) : (
+          <div className="space-y-4">
+            {photo ? (
+              <div className="h-40 rounded-2xl overflow-hidden bg-slate-100">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={photo} alt="" className="w-full h-full object-cover" />
+              </div>
+            ) : null}
+
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-semibold text-slate-900 truncate">{parking?.title ?? "Ma place"}</div>
+                <div className="mt-1 text-xs text-slate-600 line-clamp-2">
+                  {parking?.address ?? "Adresse non renseignée"}
+                </div>
+              </div>
+              <StatusChip b={drawerBooking} />
+            </div>
+
+            <div className={`${UI.card} ${UI.cardPad} space-y-2`}>
+              <div className="text-sm text-slate-700">
+                <div>
+                  <span className="text-slate-500">Début :</span>{" "}
+                  <b className="text-slate-900">{formatDateTime(drawerBooking.start_time)}</b>
+                </div>
+                <div>
+                  <span className="text-slate-500">Fin :</span>{" "}
+                  <b className="text-slate-900">{formatDateTime(drawerBooking.end_time)}</b>
+                </div>
+                <div className="pt-1">
+                  <span className="text-slate-500">Total :</span>{" "}
+                  <b className="text-slate-900">{money(drawerBooking.total_price, drawerBooking.currency)}</b>
+                </div>
+                <div className="text-xs text-slate-500 pt-1">
+                  Paiement :{" "}
+                  <span className="font-medium text-slate-900">{drawerBooking.payment_status}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Link href={`/parkings/${parkingId}`} className={`${Btn.ghost} w-full sm:flex-1`}>
+                Voir la place
+              </Link>
+
+              <button
+                type="button"
+                className={`${Btn.primary} w-full sm:flex-1`}
+                disabled={!session || chatLoadingId === drawerBooking.id}
+                onClick={() => openChat(drawerBooking.id)}
+                title="Ouvrir la conversation avec le client"
+              >
+                {chatLoadingId === drawerBooking.id ? "…" : "Chat"}
+              </button>
+
+              <button
+                type="button"
+                className={`${Btn.ghost} w-full sm:flex-1`}
+                onClick={() => {
+                  // garde ton UX existant: "Détails" ouvre ton popup #1
+                  setOpenBooking(drawerBooking);
+                  setDrawerOpen(false);
+                }}
+              >
+                Détails
+              </button>
+
+              <button
+                type="button"
+                className={`${Btn.danger} w-full sm:flex-1`}
+                disabled={loading || (drawerBooking.status ?? "").toLowerCase() === "cancelled"}
+                onClick={() => openOwnerCancelConfirm(drawerBooking)}
+                title={(drawerBooking.status ?? "").toLowerCase() === "cancelled" ? "Déjà annulée" : ""}
+              >
+                Annuler
+              </button>
+            </div>
+
+            <div className="pt-2 text-xs text-slate-500 border-t border-slate-200/70">
+              Remarque : l’annulation propriétaire déclenche un remboursement automatique uniquement si la réservation est payée.
+            </div>
+          </div>
+        )}
+      </WowDrawer>
 
       <header className={UI.sectionTitleRow}>
         <div className="space-y-1 min-w-0">
@@ -415,7 +705,69 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
         </div>
       )}
 
-      {/* ✅ À venir (cards comme côté client) */}
+      {/* ✅ Calendrier (ajouté sans casser tes sections) */}
+      <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="space-y-1">
+            <h3 className={UI.h2}>Calendrier</h3>
+            <p className={UI.subtle}>Clique une réservation pour ouvrir le drawer.</p>
+          </div>
+
+          {/* ✅ filtres (propres) */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              type="button"
+              className={`${UI.btnBase} ${filter === "all" ? UI.btnPrimary : UI.btnGhost}`}
+              onClick={() => setFilter("all")}
+            >
+              Toutes ({counts.all})
+            </button>
+            <button
+              type="button"
+              className={`${UI.btnBase} ${filter === "confirmed" ? UI.btnPrimary : UI.btnGhost}`}
+              onClick={() => setFilter("confirmed")}
+            >
+              Confirmées ({counts.confirmed})
+            </button>
+            <button
+              type="button"
+              className={`${UI.btnBase} ${filter === "pending" ? UI.btnPrimary : UI.btnGhost}`}
+              onClick={() => setFilter("pending")}
+            >
+              En attente ({counts.pending})
+            </button>
+            <button
+              type="button"
+              className={`${UI.btnBase} ${filter === "cancelled" ? UI.btnPrimary : UI.btnGhost}`}
+              onClick={() => setFilter("cancelled")}
+            >
+              Annulées ({counts.cancelled})
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200/70 bg-white/70 backdrop-blur p-2">
+          <FullCalendar
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            initialView="timeGridWeek"
+            headerToolbar={{
+              left: "prev,next today",
+              center: "title",
+              right: "timeGridWeek,dayGridMonth",
+            }}
+            height="auto"
+            nowIndicator
+            selectable={false}
+            eventClick={onEventClick}
+            events={calendarEvents}
+            eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+            slotLabelFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+            allDaySlot={false}
+          />
+        </div>
+      </section>
+
+      {/* ✅ À venir (inchangé, juste alimenté par filteredRows) */}
       <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
         <div className="flex items-center justify-between">
           <h3 className={UI.h2}>À venir</h3>
@@ -499,7 +851,7 @@ export default function BookingsClient({ parkingId }: { parkingId: string }) {
         </div>
       </section>
 
-      {/* ✅ Historique */}
+      {/* ✅ Historique (inchangé, juste alimenté par filteredRows) */}
       <section className={`${UI.card} ${UI.cardPad} space-y-4`}>
         <div className="flex items-center justify-between">
           <h3 className={UI.h2}>Historique</h3>
