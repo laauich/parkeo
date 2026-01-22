@@ -1,19 +1,30 @@
-// app/components/AddressSearch.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI } from "@/app/components/ui";
 
-export type PickPayload = {
-  lat: number;
-  lng: number;
-  displayName: string;
+// Typage pour l'adresse brute retournée par Nominatim
+type NominatimAddress = {
+  road?: string;
+  house_number?: string;
+  postcode?: string;
+  city?: string;
+  town?: string;
+  village?: string;
 };
 
 type NominatimItem = {
   display_name: string;
   lat: string;
   lon: string;
+  address?: NominatimAddress;
+};
+
+export type PickPayload = {
+  lat: number;
+  lng: number;
+  displayName: string;
+  raw?: NominatimItem; // on garde le raw complet si besoin
 };
 
 type Props = {
@@ -28,7 +39,7 @@ function toPickPayload(x: NominatimItem): PickPayload | null {
   const lat = Number(x.lat);
   const lng = Number(x.lon);
   if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
-  return { lat, lng, displayName: x.display_name };
+  return { lat, lng, displayName: x.display_name, raw: x };
 }
 
 export default function AddressSearch({
@@ -41,10 +52,10 @@ export default function AddressSearch({
   const isControlled = typeof query === "string" && typeof onQueryChange === "function";
 
   const [internalQuery, setInternalQuery] = useState<string>("");
-  const q = isControlled ? (query as string) : internalQuery;
+  const q = isControlled ? query : internalQuery;
 
   const setQ = (v: string) => {
-    if (isControlled) (onQueryChange as (v: string) => void)(v);
+    if (isControlled) onQueryChange?.(v);
     else setInternalQuery(v);
   };
 
@@ -65,12 +76,12 @@ export default function AddressSearch({
     setError(null);
 
     try {
-      if (abortRef.current) abortRef.current.abort();
+      abortRef.current?.abort();
       abortRef.current = new AbortController();
 
       const url =
         "https://nominatim.openstreetmap.org/search" +
-        `?format=json&addressdetails=1&limit=6&q=${encodeURIComponent(text)}`;
+        `?format=json&addressdetails=1&limit=6&countrycodes=ch&q=${encodeURIComponent(text)}`;
 
       const res = await fetch(url, { signal: abortRef.current.signal });
       const json = (await res.json().catch(() => [])) as NominatimItem[];
@@ -83,6 +94,7 @@ export default function AddressSearch({
       }
 
       const mapped = (json ?? []).map(toPickPayload).filter(Boolean) as PickPayload[];
+
       setItems(mapped);
       setOpen(true);
       setLoading(false);
@@ -95,13 +107,7 @@ export default function AddressSearch({
   };
 
   useEffect(() => {
-    setError(null);
-
-    if (!canSearch) {
-      setItems([]);
-      setOpen(false);
-      return;
-    }
+    if (!canSearch) return;
 
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
@@ -110,10 +116,12 @@ export default function AddressSearch({
 
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
-      if (abortRef.current) abortRef.current.abort();
+      abortRef.current?.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, canSearch]);
+
+  const showResults = open && items.length > 0;
+  const showEmpty = open && !loading && items.length === 0 && canSearch;
 
   return (
     <div className={className ?? ""}>
@@ -121,8 +129,12 @@ export default function AddressSearch({
         <input
           className={UI.input}
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={placeholder ?? "Adresse…"}
+          onChange={(e) => {
+            const v = e.target.value;
+            setQ(v);
+            if (v.trim().length < 3) setOpen(false);
+          }}
+          placeholder={placeholder ?? "Adresse en Suisse…"}
           onFocus={() => {
             if (items.length > 0) setOpen(true);
           }}
@@ -131,22 +143,22 @@ export default function AddressSearch({
           }}
         />
 
-        {loading ? (
+        {loading && (
           <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
             …
           </div>
-        ) : null}
+        )}
       </div>
 
-      {error ? (
+      {error && (
         <div className="mt-2 rounded-2xl border border-rose-200 bg-rose-50/60 p-3">
           <p className="text-sm text-rose-700">
             <b>Erreur :</b> {error}
           </p>
         </div>
-      ) : null}
+      )}
 
-      {open && items.length > 0 ? (
+      {showResults && (
         <div className="mt-2 space-y-2">
           {items.map((it) => (
             <button
@@ -156,21 +168,18 @@ export default function AddressSearch({
               onMouseDown={(e) => e.preventDefault()} // évite blur avant click
               onClick={() => {
                 onPick(it);
+                setQ(it.displayName);
                 setOpen(false);
               }}
             >
               <div className="font-medium text-slate-900">📍 {it.displayName}</div>
-              <div className={UI.subtle}>
-                {it.lat.toFixed(5)} · {it.lng.toFixed(5)}
-              </div>
+              <div className={UI.subtle}>{it.lat.toFixed(5)} · {it.lng.toFixed(5)}</div>
             </button>
           ))}
         </div>
-      ) : null}
+      )}
 
-      {!loading && open && items.length === 0 && canSearch ? (
-        <p className={[UI.p, "mt-2"].join(" ")}>Aucun résultat.</p>
-      ) : null}
+      {showEmpty && <p className={[UI.p, "mt-2"].join(" ")}>Aucun résultat en Suisse.</p>}
 
       <p className={[UI.subtle, "mt-2"].join(" ")}>
         Astuce : tape au moins 3 caractères (ex : “Rue du Rhône 12, Genève”).
