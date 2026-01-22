@@ -1,7 +1,15 @@
 @import "tailwindcss";
 @import "leaflet/dist/leaflet.css";
-@import "@fullcalendar/common/main.css";
-@import "@fullcalendar/timegrid/main.css";
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* ✅ FullCalendar v6+ */
+@import "@fullcalendar/core/index.css";
+@import "@fullcalendar/timegrid/index.css";
+
 
 
 /* Variables globales */
