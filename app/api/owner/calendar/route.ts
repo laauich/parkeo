@@ -37,9 +37,26 @@ type RawBooking = {
   total_price: string | number;
   currency: string | null;
 
-  // ✅ IMPORTANT: Supabase join peut renvoyer objet OU tableau
+  // ✅ Supabase join peut renvoyer objet OU tableau (selon config/typing)
   parkings: ParkingJoin | ParkingJoin[] | null;
 };
+
+function safeUpperCurrency(v: unknown) {
+  const s = typeof v === "string" ? v.trim() : "";
+  return (s || "chf").toUpperCase();
+}
+
+function safeNumber(v: unknown) {
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+// Tolérant : accepte "YYYY-MM-DD" ou ISO complet
+function isIsoLike(v: string) {
+  if (!v) return false;
+  // 2026-01-22 OR 2026-01-22T10:00:00Z OR with offset
+  return /^\d{4}-\d{2}-\d{2}([T\s].*)?$/.test(v);
+}
 
 export async function GET(req: Request) {
   try {
@@ -63,6 +80,11 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "start/end requis" }, { status: 400 });
     }
 
+    // FullCalendar envoie généralement ISO; on garde un check souple
+    if (!isIsoLike(start) || !isIsoLike(end)) {
+      return NextResponse.json({ ok: false, error: "start/end invalides" }, { status: 400 });
+    }
+
     if (parkingId !== "all" && !isUuid(parkingId)) {
       return NextResponse.json({ ok: false, error: "parkingId invalide" }, { status: 400 });
     }
@@ -83,8 +105,8 @@ export async function GET(req: Request) {
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
     // Query bookings dans la plage visible
-    // On filtre sur start_time. (FullCalendar fournit start/end de la view)
-    // IMPORTANT: on joint parkings pour vérifier owner_id = userId
+    // On filtre sur start_time (view range). Si tu veux inclure les events qui chevauchent,
+    // on pourrait aussi faire (start_time < end && end_time > start). Là on garde simple/performant.
     let q = admin
       .from("bookings")
       .select(
@@ -96,7 +118,7 @@ export async function GET(req: Request) {
 
     if (parkingId !== "all") q = q.eq("parking_id", parkingId);
 
-    // Option: ne montrer que les “actives” (celles qui bloquent la dispo)
+    // Option: ne montrer que les “actives”
     if (statusFilter !== "all") {
       q = q.in("status", ["pending_payment", "confirmed"]);
     }
@@ -109,16 +131,14 @@ export async function GET(req: Request) {
 
     const events = rows.map((b) => {
       // ✅ normalise join Supabase (objet vs tableau)
-      const parking =
-        Array.isArray(b.parkings) ? (b.parkings[0] ?? null) : (b.parkings ?? null);
+      const parking = Array.isArray(b.parkings) ? (b.parkings[0] ?? null) : (b.parkings ?? null);
 
       const parkingTitle = parking?.title ?? "Place";
-      const st = b.status ?? "unknown";
-      const pay = b.payment_status ?? "unknown";
-      const cur = (b.currency ?? "chf").toUpperCase();
+      const st = (b.status ?? "unknown").toLowerCase();
+      const pay = (b.payment_status ?? "unknown").toLowerCase();
+      const cur = safeUpperCurrency(b.currency);
 
-      const priceNum = typeof b.total_price === "string" ? Number(b.total_price) : Number(b.total_price);
-      const price = Number.isFinite(priceNum) ? priceNum : null;
+      const price = safeNumber(b.total_price);
 
       // Titre court, lisible
       const title =
@@ -133,6 +153,7 @@ export async function GET(req: Request) {
         title,
         start: b.start_time,
         end: b.end_time,
+        // NOTE: couleurs => à gérer côté client via classNames / eventClassNames
         extendedProps: {
           bookingId: b.id,
           parkingId: b.parking_id,
