@@ -3,13 +3,9 @@ import "./globals.css";
 import type { Metadata } from "next";
 import NavbarClient from "./components/NavbarClient";
 import { AuthProvider } from "./providers/AuthProvider";
-import "@fullcalendar/core/index.css";
-import "@fullcalendar/daygrid/index.css";
-import "@fullcalendar/timegrid/index.css";
 
 const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-  "https://parkeo.ch";
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.ch";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -52,9 +48,7 @@ export default function RootLayout({
           <NavbarClient />
 
           {/* Contenu principal */}
-          <main className="flex-1 w-full">
-            {children}
-          </main>
+          <main className="flex-1 w-full">{children}</main>
         </AuthProvider>
       </body>
     </html>
