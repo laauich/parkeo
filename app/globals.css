@@ -65,3 +65,5 @@ input::placeholder,
 textarea::placeholder {
   color: rgba(15, 23, 42, 0.55);
 }
+@import "@fullcalendar/common/main.css";
+@import "@fullcalendar/timegrid/main.css";
