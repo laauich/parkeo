@@ -334,6 +334,19 @@ export default function NavbarClient() {
                     </Link>
 
                     <Link
+  className={[navClass("/my-parkings/calendar"), "w-full block"].join(" ")}
+  href="/my-parkings/calendar"
+  onClick={() => {
+    resetOwnerBadge(); // ✅disparaît quand tu cliques
+    closeOwnerOnly();
+    closeAll();
+  }}
+>
+  📅 Calendrier
+</Link>
+
+
+                    <Link
                       className={[navClass("/owner/payouts"), "w-full block"].join(" ")}
                       href="/owner/payouts"
                       onClick={() => {
@@ -466,6 +479,18 @@ export default function NavbarClient() {
                   >
                     Réservations (mes places)
                   </Link>
+
+                  <Link
+  className={mobileLinkClass("/my-parkings/calendar")}
+  href="/my-parkings/calendar"
+  onClick={() => {
+    resetOwnerBadge();
+    closeAll();
+  }}
+>
+  📅 Calendrier
+</Link>
+
 
                   <Link
                     className={mobileLinkClass("/owner/payouts")}
