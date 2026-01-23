@@ -254,9 +254,9 @@ export default function MyParkingsPage() {
             <Link href="/parkings/new" className={Btn.primary}>
               + Proposer une place
             </Link>
- <Link href="/my-parkings/calendar" className={Btn.ghost}>
-    📅 Calendrier
-  </Link>
+            <Link href="/my-parkings/calendar" className={Btn.primary}>
+             📅 Calendrier
+            </Link>
             <button
               type="button"
               onClick={() => {
