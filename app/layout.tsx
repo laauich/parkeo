@@ -4,11 +4,6 @@ import type { Metadata } from "next";
 import NavbarClient from "./components/NavbarClient";
 import { AuthProvider } from "./providers/AuthProvider";
 
-// ⚠️ Supprimé: FullCalendar CSS imports
-// import "@fullcalendar/core/index.css";
-// import "@fullcalendar/daygrid/index.css";
-// import "@fullcalendar/timegrid/index.css";
-
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.ch";
 
@@ -47,6 +42,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="fr">
+      <head>
+        {/* ✅ FullCalendar CSS via CDN (évite les problèmes d’exports/Turbopack) */}
+        <link
+          rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.css"
+        />
+      </head>
+
       <body className="min-h-screen flex flex-col">
         <AuthProvider>
           {/* Navbar */}

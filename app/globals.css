@@ -1,3 +1,4 @@
+/* app/globals.css */
 @import "tailwindcss";
 @import "leaflet/dist/leaflet.css";
 
@@ -6,7 +7,7 @@
   --background: #ffffff;
   --foreground: #171717;
 
-  /* Variables "app" (si tu les utilises) */
+  /* Variables "app" */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
 
@@ -53,7 +54,7 @@ select:-webkit-autofill {
   box-shadow: 0 0 0px 1000px #ffffff inset; /* force fond blanc */
 }
 
-/* ✅ Fix lisibilité champs (évite texte trop clair selon thème) */
+/* ✅ Fix lisibilité champs */
 input,
 textarea,
 select {
