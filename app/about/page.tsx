@@ -2,6 +2,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { UI } from "@/app/components/ui";
+import ContactFormClient from "./ContactFormClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,10 +81,36 @@ export default function AboutPage() {
             </Link>
           </div>
 
-          <p className={UI.subtle}>
-            Support : ajoute ici ton email de support quand tu veux.
-          </p>
+          {/* ✅ Support premium + CTA direct */}
+          <div className="rounded-2xl border border-slate-200/70 bg-white/60 backdrop-blur p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="space-y-1">
+                <div className="font-semibold text-slate-900">Support Parkeo</div>
+                <p className="text-sm text-slate-700">
+                  Une question, un bug, une demande ? Écris-nous :
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <span className={UI.chip}>
+                    ✉️ <b>support@parkeo.ch</b>
+                  </span>
+                  <span className={`${UI.chip} bg-emerald-50 border-emerald-200 text-emerald-700`}>
+                    Réponse sous 24h ouvrées
+                  </span>
+                </div>
+              </div>
+
+              <a
+                href="mailto:support@parkeo.ch"
+                className={`${UI.btnBase} ${UI.btnGhost}`}
+              >
+                Écrire un email
+              </a>
+            </div>
+          </div>
         </section>
+
+        {/* ✅ Formulaire de contact ultra premium */}
+        <ContactFormClient />
       </div>
     </main>
   );

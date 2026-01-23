@@ -3,6 +3,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import NavbarClient from "./components/NavbarClient";
 import { AuthProvider } from "./providers/AuthProvider";
+import { Toaster } from "sonner";
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://parkeo.ch";
@@ -58,6 +59,8 @@ export default function RootLayout({
           {/* Contenu principal */}
           <main className="flex-1 w-full">{children}</main>
         </AuthProvider>
+        <Toaster richColors position="top-right" />
+
       </body>
     </html>
   );
