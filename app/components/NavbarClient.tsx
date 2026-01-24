@@ -259,12 +259,12 @@ export default function NavbarClient() {
             onClick={closeAll}
             className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/60 transition"
           >
-            {/* ✅ Logo P */}
+            {/*  Logo  */}
 
               <img
                 src="brand/logo-p.png"
                 alt="Parkeo"
-                className="relative w-10 h-10 rounded-x1 shadow-sm objet-contain"
+                className="h-12 w-auto object-contain drop-shadow-(0-8px_24px_rgba(0,0,0,0.12)) transition hover:scale-(1.04)"
               />
 
             {/* Wordmark */}
