@@ -7,7 +7,8 @@ import { UI } from "@/app/components/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useUnreadCount } from "@/app/hooks/useUnreadCount";
-import { Span } from "next/dist/trace";
+import Image from "next/image";
+
 
 type OwnerUnseenResponse =
   | { ok: true; unseen: number }
@@ -254,21 +255,20 @@ export default function NavbarClient() {
       <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Left */}
         <div className="flex items-center gap-3">
+          
+          {/*  Logo  */}
+          
           <Link
             href="/"
             onClick={closeAll}
-            className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/60 transition"
+            className="flex items-center px-2 py-1 rounded-xl hover:bg-white/60 transition"
           >
-            {/*  Logo  */}
-
-              <img
-                src="brand/logo-p.png"
+              <Image
+                src="brand/logo.png"
                 alt="Parkeo"
-                className="h-12 w-auto object-contain drop-shadow-(0-8px_24px_rgba(0,0,0,0.12)) transition hover:scale-(1.04)"
+                className="h-12 sm:h-14 md:h-16 w-auto object-contain drop-shadow-(0_10px_28px_rgba(99,102,241,0.35))"
               />
-
-          
-          </Link>
+            </Link>
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-1">
