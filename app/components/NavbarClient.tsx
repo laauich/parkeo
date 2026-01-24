@@ -269,7 +269,7 @@ export default function NavbarClient() {
                 width={620}
                 height={290}
                 property="true"
-                className="h-14 sm:h-16 md:h-20 w-auto object-contain"
+                className="h-28 sm:h-32 md:h-40 w-auto object-contain"
               />
             </Link>
 
