@@ -7,6 +7,7 @@ import { UI } from "@/app/components/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useUnreadCount } from "@/app/hooks/useUnreadCount";
+import { Span } from "next/dist/trace";
 
 type OwnerUnseenResponse =
   | { ok: true; unseen: number }
@@ -258,12 +259,13 @@ export default function NavbarClient() {
             onClick={closeAll}
             className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/60 transition"
           >
-            {/* ✅ Logo P (bold premium) */}
-            <span className="relative inline-flex items-center justify-center w-10 h-10 rounded-2xl text-white font-extrabold text-lg">
-              <span className="absolute inset-0 rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600 shadow-[0_14px_30px_rgba(99,102,241,0.22)]" />
-              <span className="absolute inset-0 rounded-2xl ring-1 ring-white/40" />
-              <span className="relative drop-shadow-sm">P</span>
-            </span>
+            {/* ✅ Logo P */}
+
+              <img
+                src="brand/logo-p.png"
+                alt="Parkeo"
+                className="relative w-10 h-10 rounded-x1 shadow-sm objet-contain"
+              />
 
             {/* Wordmark */}
             <span className="font-semibold tracking-tight text-slate-950 text-lg">
