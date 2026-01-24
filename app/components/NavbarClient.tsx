@@ -266,9 +266,9 @@ export default function NavbarClient() {
               <Image
                 src="brand/logo.png"
                 alt="Parkeo"
-                width={480}
-                height={200}
-                className="h-16 sm:h-18 md:h-22 w-auto object-contain drop-shadow-(0_10px_28px_rgba(99,102,241,0.35))"
+                width={620}
+                height={290}
+                className="h-14 sm:h-16 md:h-20 w-auto"
               />
             </Link>
 
