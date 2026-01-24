@@ -53,14 +53,11 @@ export default function RootLayout({
 
       <body className="min-h-screen flex flex-col">
         <AuthProvider>
-          {/* Navbar */}
           <NavbarClient />
-
-          {/* Contenu principal */}
           <main className="flex-1 w-full">{children}</main>
         </AuthProvider>
-        <Toaster richColors position="top-right" />
 
+        <Toaster richColors position="top-right" />
       </body>
     </html>
   );

@@ -139,10 +139,14 @@ export default function NavbarClient() {
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [ownerOpen, open]);
 
-  const mobileLinkClass = (href: string) => [navClass(href), "w-full block text-left"].join(" ");
+  const mobileLinkClass = (href: string) =>
+    [navClass(href), "w-full block text-left"].join(" ");
 
   const ownerActive =
-    isActive("/my-parkings") || isActive("/my-parkings/bookings") || isActive("/owner/payouts");
+    isActive("/my-parkings") ||
+    isActive("/my-parkings/bookings") ||
+    isActive("/owner/payouts") ||
+    isActive("/my-parkings/calendar");
 
   const ownerTriggerClass = [
     "w-full md:w-auto",
@@ -179,7 +183,9 @@ export default function NavbarClient() {
         const ts = Date.now(); // ✅ cache buster
 
         const url = since
-          ? `/api/owner/bookings/unseen-count?since=${encodeURIComponent(since)}&ts=${ts}`
+          ? `/api/owner/bookings/unseen-count?since=${encodeURIComponent(
+              since
+            )}&ts=${ts}`
           : `/api/owner/bookings/unseen-count?ts=${ts}`;
 
         const res = await fetch(url, {
@@ -195,7 +201,7 @@ export default function NavbarClient() {
         const json = (await res.json().catch(() => ({}))) as OwnerUnseenResponse;
         if (!res.ok || !json || json.ok === false) return;
 
-        const unseen = Number(json.unseen || 0);
+        const unseen = json.ok ? Number(json.unseen) || 0 : 0;
         if (!Number.isFinite(unseen)) return;
 
         writeOwnerCountLocal(unseen);
@@ -206,11 +212,9 @@ export default function NavbarClient() {
       }
     };
 
-    // premier check + interval
     void check();
     const interval = window.setInterval(check, 20_000);
 
-    // ✅ quand l’utilisateur revient sur l’onglet du navigateur
     const onVis = () => {
       if (document.visibilityState === "visible") void check();
     };
@@ -238,8 +242,9 @@ export default function NavbarClient() {
         "bg-white/70 backdrop-blur-xl",
         "shadow-sm",
         "relative",
+        // ✅ bold startup gradient header
         "before:absolute before:inset-x-0 before:top-0 before:h-16",
-        "before:bg-gradient-to-r before:from-violet-200/60 before:via-white/30 before:to-violet-200/60",
+        "before:bg-gradient-to-r before:from-indigo-200/60 before:via-white/25 before:to-fuchsia-200/60",
         "before:pointer-events-none before:-z-10",
         "after:absolute after:inset-x-0 after:bottom-0 after:h-px",
         "after:bg-gradient-to-r after:from-transparent after:via-violet-300/60 after:to-transparent",
@@ -249,22 +254,22 @@ export default function NavbarClient() {
         {/* Left */}
         <div className="flex items-center gap-3">
           <Link
-  href="/"
-  onClick={closeAll}
-  className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/60 transition"
->
-  {/* Logo P */}
-  <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-violet-600 text-white font-bold text-lg shadow-sm">
-    P
-  </span>
+            href="/"
+            onClick={closeAll}
+            className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/60 transition"
+          >
+            {/* ✅ Logo P (bold premium) */}
+            <span className="relative inline-flex items-center justify-center w-10 h-10 rounded-2xl text-white font-extrabold text-lg">
+              <span className="absolute inset-0 rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600 shadow-[0_14px_30px_rgba(99,102,241,0.22)]" />
+              <span className="absolute inset-0 rounded-2xl ring-1 ring-white/40" />
+              <span className="relative drop-shadow-sm">P</span>
+            </span>
 
-  {/* Wordmark */}
-  <span className="font-semibold tracking-tight text-slate-900 text-lg">
-    Parkeo
-  </span>
-</Link>
-
-
+            {/* Wordmark */}
+            <span className="font-semibold tracking-tight text-slate-950 text-lg">
+              Parkeo
+            </span>
+          </Link>
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-1">
@@ -272,15 +277,27 @@ export default function NavbarClient() {
               Carte
             </Link>
 
-            <Link className={navClass("/parkings")} href="/parkings" onClick={closeAll}>
+            <Link
+              className={navClass("/parkings")}
+              href="/parkings"
+              onClick={closeAll}
+            >
               Parkings
             </Link>
 
-            <Link className={navClass("/messages")} href="/messages" onClick={closeAll}>
+            <Link
+              className={navClass("/messages")}
+              href="/messages"
+              onClick={closeAll}
+            >
               {MessagesLabel}
             </Link>
 
-            <Link className={navClass("/my-bookings")} href="/my-bookings" onClick={closeAll}>
+            <Link
+              className={navClass("/my-bookings")}
+              href="/my-bookings"
+              onClick={closeAll}
+            >
               Réservations
             </Link>
 
@@ -320,10 +337,12 @@ export default function NavbarClient() {
                 >
                   <div className="flex flex-col gap-1">
                     <Link
-                      className={[navClass("/my-parkings"), "w-full block"].join(" ")}
+                      className={[navClass("/my-parkings"), "w-full block"].join(
+                        " "
+                      )}
                       href="/my-parkings"
                       onClick={() => {
-                        resetOwnerBadge(); // ✅ disparaît quand tu cliques
+                        resetOwnerBadge();
                         closeOwnerOnly();
                         closeAll();
                       }}
@@ -332,10 +351,13 @@ export default function NavbarClient() {
                     </Link>
 
                     <Link
-                      className={[navClass("/my-parkings/bookings"), "w-full block"].join(" ")}
+                      className={[
+                        navClass("/my-parkings/bookings"),
+                        "w-full block",
+                      ].join(" ")}
                       href="/my-parkings/bookings"
                       onClick={() => {
-                        resetOwnerBadge(); // ✅ disparaît quand tu cliques
+                        resetOwnerBadge();
                         closeOwnerOnly();
                         closeAll();
                       }}
@@ -344,23 +366,28 @@ export default function NavbarClient() {
                     </Link>
 
                     <Link
-  className={[navClass("/my-parkings/calendar"), "w-full block"].join(" ")}
-  href="/my-parkings/calendar"
-  onClick={() => {
-    resetOwnerBadge(); // ✅disparaît quand tu cliques
-    closeOwnerOnly();
-    closeAll();
-  }}
->
-  📅 Calendrier
-</Link>
-
+                      className={[
+                        navClass("/my-parkings/calendar"),
+                        "w-full block",
+                      ].join(" ")}
+                      href="/my-parkings/calendar"
+                      onClick={() => {
+                        resetOwnerBadge();
+                        closeOwnerOnly();
+                        closeAll();
+                      }}
+                    >
+                      📅 Calendrier
+                    </Link>
 
                     <Link
-                      className={[navClass("/owner/payouts"), "w-full block"].join(" ")}
+                      className={[
+                        navClass("/owner/payouts"),
+                        "w-full block",
+                      ].join(" ")}
                       href="/owner/payouts"
                       onClick={() => {
-                        resetOwnerBadge(); // ✅ disparaît quand tu cliques
+                        resetOwnerBadge();
                         closeOwnerOnly();
                         closeAll();
                       }}
@@ -376,7 +403,11 @@ export default function NavbarClient() {
 
         {/* Right */}
         <div className="hidden md:flex items-center gap-2">
-          <Link href="/parkings/new" className={btnPrimaryPill} onClick={closeAll}>
+          <Link
+            href="/parkings/new"
+            className={btnPrimaryPill}
+            onClick={closeAll}
+          >
             Proposer
           </Link>
 
@@ -425,21 +456,36 @@ export default function NavbarClient() {
 
       {/* Mobile menu */}
       {open && (
-        <div ref={mobileMenuRef} className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur">
+        <div
+          ref={mobileMenuRef}
+          className="md:hidden border-t border-slate-200/70 bg-white/85 backdrop-blur"
+        >
           <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-3 space-y-2">
             <Link className={mobileLinkClass("/map")} href="/map" onClick={closeAll}>
               Carte
             </Link>
 
-            <Link className={mobileLinkClass("/parkings")} href="/parkings" onClick={closeAll}>
+            <Link
+              className={mobileLinkClass("/parkings")}
+              href="/parkings"
+              onClick={closeAll}
+            >
               Parkings
             </Link>
 
-            <Link className={mobileLinkClass("/messages")} href="/messages" onClick={closeAll}>
+            <Link
+              className={mobileLinkClass("/messages")}
+              href="/messages"
+              onClick={closeAll}
+            >
               {MessagesLabel}
             </Link>
 
-            <Link className={mobileLinkClass("/my-bookings")} href="/my-bookings" onClick={closeAll}>
+            <Link
+              className={mobileLinkClass("/my-bookings")}
+              href="/my-bookings"
+              onClick={closeAll}
+            >
               Réservations
             </Link>
 
@@ -461,13 +507,21 @@ export default function NavbarClient() {
                     {OwnerBadge}
                   </span>
                 </span>
-                <span className={["text-slate-600 transition-transform", ownerOpen ? "rotate-180" : "rotate-0"].join(" ")}>
+                <span
+                  className={[
+                    "text-slate-600 transition-transform",
+                    ownerOpen ? "rotate-180" : "rotate-0",
+                  ].join(" ")}
+                >
                   ▾
                 </span>
               </button>
 
               {ownerOpen ? (
-                <div id="owner-submenu-mobile" className="mt-2 ml-2 pl-3 border-l border-slate-200/70 flex flex-col gap-2">
+                <div
+                  id="owner-submenu-mobile"
+                  className="mt-2 ml-2 pl-3 border-l border-slate-200/70 flex flex-col gap-2"
+                >
                   <Link
                     className={mobileLinkClass("/my-parkings")}
                     href="/my-parkings"
@@ -491,16 +545,15 @@ export default function NavbarClient() {
                   </Link>
 
                   <Link
-  className={mobileLinkClass("/my-parkings/calendar")}
-  href="/my-parkings/calendar"
-  onClick={() => {
-    resetOwnerBadge();
-    closeAll();
-  }}
->
-  📅 Calendrier
-</Link>
-
+                    className={mobileLinkClass("/my-parkings/calendar")}
+                    href="/my-parkings/calendar"
+                    onClick={() => {
+                      resetOwnerBadge();
+                      closeAll();
+                    }}
+                  >
+                    📅 Calendrier
+                  </Link>
 
                   <Link
                     className={mobileLinkClass("/owner/payouts")}
