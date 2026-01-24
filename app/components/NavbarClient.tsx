@@ -250,19 +250,20 @@ export default function NavbarClient() {
         <div className="flex items-center gap-3">
           <Link
   href="/"
-  className="flex items-center gap-2 font-semibold tracking-tight text-slate-900 px-2 py-1 rounded-xl hover:bg-white/60 transition"
   onClick={closeAll}
+  className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/60 transition"
 >
   {/* Logo P */}
-  <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-violet-600/10 text-violet-700 font-bold text-lg shadow-sm">
+  <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-violet-600 text-white font-bold text-lg shadow-sm">
     P
   </span>
 
-  {/* Texte Parkeo */}
-  <span className="text-base leading-none">
-    <span className="font-semibold">Parkeo</span>
+  {/* Wordmark */}
+  <span className="font-semibold tracking-tight text-slate-900 text-lg">
+    Parkeo
   </span>
 </Link>
+
 
 
           {/* Desktop nav */}
