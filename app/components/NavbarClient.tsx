@@ -267,10 +267,7 @@ export default function NavbarClient() {
                 className="h-12 w-auto object-contain drop-shadow-(0-8px_24px_rgba(0,0,0,0.12)) transition hover:scale-(1.04)"
               />
 
-            {/* Wordmark */}
-            <span className="font-semibold tracking-tight text-slate-950 text-lg">
-              Parkeo
-            </span>
+          
           </Link>
 
           {/* Desktop nav */}
