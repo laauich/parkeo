@@ -9,9 +9,7 @@ export const UI = {
     "min-h-[calc(100vh-64px)] min-h-[calc(100dvh-64px)] w-full " +
     "bg-[radial-gradient(1200px_circle_at_15%_-10%,rgba(99,102,241,0.30),transparent_55%),radial-gradient(900px_circle_at_95%_10%,rgba(236,72,153,0.22),transparent_55%),linear-gradient(to_bottom,#ffffff,rgba(255,255,255,0.9))]",
 
-  /**
-   * Container FULL WIDTH
-   */
+  /** Container FULL WIDTH */
   container: "w-full px-4 sm:px-6 lg:px-8",
 
   section: "py-8 sm:py-10 lg:py-12",
@@ -125,26 +123,22 @@ export const UI = {
      Inputs
   ========================= */
 
-  input:
-    "w-full rounded-xl border border-slate-200 bg-white " +
-    "px-4 py-3 text-sm outline-none " +
-    "focus:ring-2 focus:ring-violet-300/50 focus:border-violet-400",
+  // ✅ on garde UNE seule version (iOS-friendly)
+  input: [
+    "w-full",
+    "rounded-xl",
+    "border border-slate-300",
+    "bg-white",
+    "text-slate-900",
+    "placeholder:text-slate-400",
+    "text-[16px] leading-6", // IMPORTANT iOS
+    "px-3 py-2",
+    "outline-none",
+    "focus:ring-2 focus:ring-violet-400/40 focus:border-violet-400",
+  ].join(" "),
 
   select:
     "w-full rounded-xl border border-slate-200 bg-white " +
     "px-3 py-3 text-sm outline-none " +
     "focus:ring-2 focus:ring-violet-300/50 focus:border-violet-400",
 };
-
-UI.input = [
-  "w-full",
-  "rounded-xl",
-  "border border-slate-300",
-  "bg-white",
-  "text-slate-900",
-  "placeholder:text-slate-400",
-  "text-[16px] leading-6", // IMPORTANT iOS
-  "px-3 py-2",
-  "outline-none",
-  "focus:ring-2 focus:ring-violet-400/40 focus:border-violet-400",
-].join(" ");
