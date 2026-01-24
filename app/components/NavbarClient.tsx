@@ -261,14 +261,15 @@ export default function NavbarClient() {
           <Link
             href="/"
             onClick={closeAll}
-            className="flex items-center px-2 py-1 rounded-xl hover:bg-white/60 transition"
+            className="flex items-center rounded-xl hover:opacity-90"
           >
               <Image
                 src="brand/logo.png"
                 alt="Parkeo"
                 width={620}
                 height={290}
-                className="h-14 sm:h-16 md:h-20 w-auto"
+                property="true"
+                className="h-14 sm:h-16 md:h-20 w-auto object-contain"
               />
             </Link>
 
