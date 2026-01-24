@@ -41,42 +41,22 @@ type ParkingCardRow = {
 
 function IconMap(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M10 6l-6 2v12l6-2 4 2 6-2V6l-6 2-4-2z"
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinejoin="round"
       />
-      <path
-        d="M10 6v12"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-      <path
-        d="M14 8v12"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
+      <path d="M10 6v12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M14 8v12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
 
 function IconBolt(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M13 2L4 14h7l-1 8 10-14h-7l0-6z"
         stroke="currentColor"
@@ -89,12 +69,7 @@ function IconBolt(props: { className?: string }) {
 
 function IconShield(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z"
         stroke="currentColor"
@@ -114,17 +89,8 @@ function IconShield(props: { className?: string }) {
 
 function IconClock(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10z" stroke="currentColor" strokeWidth="1.8" />
       <path
         d="M12 6v6l4 2"
         stroke="currentColor"
@@ -138,24 +104,14 @@ function IconClock(props: { className?: string }) {
 
 function IconBuilding(props: { className?: string }) {
   return (
-    <svg
-      className={props.className}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg className={props.className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M4 21V7l8-4 8 4v14"
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinejoin="round"
       />
-      <path
-        d="M9 21v-6h6v6"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
+      <path d="M9 21v-6h6v6" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
       <path
         d="M8 11h.01M12 11h.01M16 11h.01M8 14h.01M12 14h.01M16 14h.01"
         stroke="currentColor"
@@ -178,7 +134,8 @@ function CardFeature({
   return (
     <div className={[UI.card, UI.cardPad].join(" ")}>
       <div className="flex items-start gap-3">
-        <div className="h-10 w-10 rounded-xl bg-violet-600/10 text-violet-700 flex items-center justify-center shrink-0">
+        {/* ✅ Rebrand D */}
+        <div className="h-10 w-10 rounded-xl bg-indigo-600/10 text-indigo-700 ring-1 ring-indigo-600/15 flex items-center justify-center shrink-0">
           <div className="h-5 w-5">{icon}</div>
         </div>
         <div className="min-w-0">
@@ -235,8 +192,7 @@ export default async function HomePage() {
     name: "Parkeo",
     url: "https://parkeo.ch",
     areaServed: { "@type": "City", name: "Genève" },
-    description:
-      "Plateforme de réservation et de location de places de parking à Genève.",
+    description: "Plateforme de réservation et de location de places de parking à Genève.",
   };
 
   const jsonLdFAQ = {
@@ -248,8 +204,7 @@ export default async function HomePage() {
         name: "Puis-je réserver un parking à l’heure ?",
         acceptedAnswer: {
           "@type": "Answer",
-          text:
-            "Oui. Choisissez vos dates, Parkeo vérifie la disponibilité et vous pouvez réserver immédiatement.",
+          text: "Oui. Choisissez vos dates, Parkeo vérifie la disponibilité et vous pouvez réserver immédiatement.",
         },
       },
       {
@@ -257,8 +212,7 @@ export default async function HomePage() {
         name: "Est-ce possible de réserver à la journée ?",
         acceptedAnswer: {
           "@type": "Answer",
-          text:
-            "Oui. Certaines places proposent un tarif journalier, affiché sur la fiche.",
+          text: "Oui. Certaines places proposent un tarif journalier, affiché sur la fiche.",
         },
       },
       {
@@ -266,8 +220,7 @@ export default async function HomePage() {
         name: "Je suis propriétaire : comment proposer ma place ?",
         acceptedAnswer: {
           "@type": "Answer",
-          text:
-            "Cliquez sur “Proposer ma place”, ajoutez l’adresse, la localisation sur la carte et des photos.",
+          text: "Cliquez sur “Proposer ma place”, ajoutez l’adresse, la localisation sur la carte et des photos.",
         },
       },
       {
@@ -275,8 +228,7 @@ export default async function HomePage() {
         name: "Où se situe Parkeo ?",
         acceptedAnswer: {
           "@type": "Answer",
-          text:
-            "Parkeo est un MVP local orienté Genève et alentours, avec une extension progressive des zones et fonctionnalités.",
+          text: "Parkeo est un MVP local orienté Genève et alentours, avec une extension progressive des zones et fonctionnalités.",
         },
       },
     ],
@@ -296,22 +248,10 @@ export default async function HomePage() {
   return (
     <>
       {/* JSON-LD (SEO) */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdWebsite) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdBusiness) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdFAQ) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdItemList) }}
-      />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdWebsite) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdBusiness) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdFAQ) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdItemList) }} />
 
       <main className={UI.page}>
         <div className={[UI.container, UI.section].join(" ")}>
@@ -321,7 +261,6 @@ export default async function HomePage() {
               UI.card,
               UI.cardPad,
               "relative overflow-hidden",
-              // ✅ hauteur + layout flex pour pousser les boutons en bas
               "min-h-[440px] sm:min-h-[520px] lg:min-h-[560px]",
               "flex flex-col",
             ].join(" ")}
@@ -334,39 +273,33 @@ export default async function HomePage() {
                 style={{ backgroundImage: "url(/home-bg.jpg)" }}
               />
 
-              {/* Overlay contrasté (texte plus lisible) */}
-              <div className="absolute inset-0 bg-gradient-to-b from-white/60 via-white/35 to-white/65" />
+              {/* ✅ Overlay premium (D) */}
+              <div className="absolute inset-0 bg-gradient-to-b from-white/70 via-white/35 to-white/70" />
+              <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/8 via-transparent to-fuchsia-500/8" />
 
-              {/* Accents premium */}
-              <div className="absolute -top-28 -right-28 h-96 w-96 rounded-full bg-violet-500/16 blur-3xl" />
-              <div className="absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-fuchsia-400/14 blur-3xl" />
+              {/* ✅ Accents premium (D) */}
+              <div className="absolute -top-28 -right-28 h-96 w-96 rounded-full bg-indigo-500/20 blur-3xl" />
+              <div className="absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-fuchsia-500/18 blur-3xl" />
+              <div className="absolute top-24 left-1/2 -translate-x-1/2 h-72 w-72 rounded-full bg-sky-400/12 blur-3xl" />
             </div>
 
             {/* ✅ Content full height */}
             <div className="relative flex flex-col flex-1 min-h-0">
-              {/* Texte en haut */}
               <h1 className={[UI.h1, "mt-2 max-w-3xl text-slate-950"].join(" ")}>
                 Réservez une place de parking à Genève, simplement.
               </h1>
 
               <p className={["mt-4 max-w-2xl text-slate-950/95"].join(" ")}>
-                À l’heure ou à la journée. Trouvez une place disponible près de
-                vous, et réservez en quelques clics.
+                À l’heure ou à la journée. Trouvez une place disponible près de vous, et réservez en quelques clics.
               </p>
 
               {/* ✅ Boutons collés en bas */}
               <div className="mt-auto pt-10 flex flex-col sm:flex-row gap-3">
-                <Link
-                  href="/map"
-                  className={[UI.btnBase, UI.btnPrimary].join(" ")}
-                >
+                <Link href="/map" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
                   Voir la carte
                 </Link>
 
-                <Link
-                  href="/parkings/new"
-                  className={[UI.btnBase, UI.btnGhost].join(" ")}
-                >
+                <Link href="/parkings/new" className={[UI.btnBase, UI.btnGhost].join(" ")}>
                   Proposer ma place
                 </Link>
               </div>
@@ -400,15 +333,15 @@ export default async function HomePage() {
               />
             </div>
 
-            {/* ✅ Remplacement SEO des chips supprimées (hors image) */}
+            {/* ✅ Chips (D) */}
             <ul className="mt-4 grid gap-3 sm:grid-cols-3">
-              <li className={[UI.card, "px-4 py-3 text-sm text-slate-800"].join(" ")}>
+              <li className={[UI.card, "px-4 py-3 text-sm text-slate-900 ring-1 ring-indigo-600/10 bg-white/90"].join(" ")}>
                 📍 Genève
               </li>
-              <li className={[UI.card, "px-4 py-3 text-sm text-slate-800"].join(" ")}>
+              <li className={[UI.card, "px-4 py-3 text-sm text-slate-900 ring-1 ring-indigo-600/10 bg-white/90"].join(" ")}>
                 🗺️ Carte interactive
               </li>
-              <li className={[UI.card, "px-4 py-3 text-sm text-slate-800"].join(" ")}>
+              <li className={[UI.card, "px-4 py-3 text-sm text-slate-900 ring-1 ring-indigo-600/10 bg-white/90"].join(" ")}>
                 🔒 Paiement sécurisé
               </li>
             </ul>
@@ -426,40 +359,24 @@ export default async function HomePage() {
             <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {rows.length > 0 ? (
                 rows.map((p) => (
-                  <Link
-                    key={p.id}
-                    href={`/parkings/${p.id}`}
-                    className={[UI.card, UI.cardHover, "block"].join(" ")}
-                  >
+                  <Link key={p.id} href={`/parkings/${p.id}`} className={[UI.card, UI.cardHover, "block"].join(" ")}>
                     <div className={UI.cardPad}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="font-semibold text-slate-900 truncate">
-                            {p.title}
-                          </div>
-                          <div className="mt-1 text-xs text-slate-500">
-                            {p.address || "Adresse non renseignée"}
-                          </div>
+                          <div className="font-semibold text-slate-900 truncate">{p.title}</div>
+                          <div className="mt-1 text-xs text-slate-500">{p.address || "Adresse non renseignée"}</div>
                         </div>
 
                         <div className="shrink-0 text-right">
                           {p.price_hour !== null ? (
-                            <div className="text-sm font-semibold text-slate-900">
-                              {p.price_hour} CHF/h
-                            </div>
+                            <div className="text-sm font-semibold text-slate-900">{p.price_hour} CHF/h</div>
                           ) : (
                             <div className="text-sm text-slate-400">—</div>
                           )}
-                          {p.price_day !== null ? (
-                            <div className="text-xs text-slate-500">
-                              {p.price_day} CHF/j
-                            </div>
-                          ) : null}
+                          {p.price_day !== null ? <div className="text-xs text-slate-500">{p.price_day} CHF/j</div> : null}
                         </div>
                       </div>
 
-                      {/* ✅ même direction qu’avant, mais visuel bouton violet
-                          ✅ pas de <Link> ici pour éviter <a> dans <a> */}
                       <div className="mt-4 flex items-center justify-between">
                         <span
                           className={[
@@ -479,14 +396,9 @@ export default async function HomePage() {
                 ))
               ) : (
                 <div className={[UI.card, UI.cardPad].join(" ")}>
-                  <p className={UI.p}>
-                    Aucune place de parking disponible à Genève pour le moment.
-                  </p>
+                  <p className={UI.p}>Aucune place de parking disponible à Genève pour le moment.</p>
                   <div className="mt-4">
-                    <Link
-                      href="/parkings/new"
-                      className={[UI.btnBase, UI.btnPrimary].join(" ")}
-                    >
+                    <Link href="/parkings/new" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
                       Proposer une place
                     </Link>
                   </div>
@@ -507,32 +419,22 @@ export default async function HomePage() {
             <div className="mt-4 grid gap-4 lg:grid-cols-3">
               <div className={[UI.card, UI.cardPad, "lg:col-span-2"].join(" ")}>
                 <p className={UI.p}>
-                  Parkeo est une plateforme dédiée à la{" "}
-                  <b>location de places de parking à Genève</b>. Que vous
-                  cherchiez un parking pour quelques heures, une journée ou
-                  davantage, vous pouvez <b>réserver une place disponible</b> en
+                  Parkeo est une plateforme dédiée à la <b>location de places de parking à Genève</b>. Que vous cherchiez un
+                  parking pour quelques heures, une journée ou davantage, vous pouvez <b>réserver une place disponible</b> en
                   quelques clics, sans abonnement.
                 </p>
 
                 <p className={[UI.p, "mt-3"].join(" ")}>
-                  Les zones les plus recherchées : <b>Genève centre</b>,{" "}
-                  <b>Plainpalais</b>, <b>Eaux-Vives</b>, <b>Carouge</b> et
-                  alentours. Passez par la carte pour repérer l’emplacement
-                  exact, puis choisissez vos dates.
+                  Les zones les plus recherchées : <b>Genève centre</b>, <b>Plainpalais</b>, <b>Eaux-Vives</b>, <b>Carouge</b> et
+                  alentours. Passez par la carte pour repérer l’emplacement exact, puis choisissez vos dates.
                 </p>
 
                 <div className="mt-5 flex flex-col sm:flex-row gap-3">
-                  <Link
-                    href="/map"
-                    className={[UI.btnBase, UI.btnPrimary].join(" ")}
-                  >
+                  <Link href="/map" className={[UI.btnBase, UI.btnPrimary].join(" ")}>
                     <IconMap className="h-4 w-4" />
                     Voir les parkings sur la carte
                   </Link>
-                  <Link
-                    href="/parkings/new"
-                    className={[UI.btnBase, UI.btnGhost].join(" ")}
-                  >
+                  <Link href="/parkings/new" className={[UI.btnBase, UI.btnGhost].join(" ")}>
                     <IconBuilding className="h-4 w-4" />
                     Mettre une place en location
                   </Link>
@@ -541,7 +443,8 @@ export default async function HomePage() {
 
               <div className={[UI.card, UI.cardPad].join(" ")}>
                 <div className="flex items-center gap-2 text-slate-900 font-semibold">
-                  <span className="h-9 w-9 rounded-xl bg-violet-600/10 text-violet-700 flex items-center justify-center">
+                  {/* ✅ Rebrand D */}
+                  <span className="h-9 w-9 rounded-xl bg-indigo-600/10 text-indigo-700 ring-1 ring-indigo-600/15 flex items-center justify-center">
                     <IconBolt className="h-5 w-5" />
                   </span>
                   <span>Conseils rapides</span>
@@ -552,12 +455,10 @@ export default async function HomePage() {
                     • Comparez <b>prix/h</b> et <b>prix/j</b> selon la durée.
                   </li>
                   <li>
-                    • Réservez tôt pour <b>centre-ville</b> et quartiers très
-                    demandés.
+                    • Réservez tôt pour <b>centre-ville</b> et quartiers très demandés.
                   </li>
                   <li>
-                    • Vérifiez les <b>instructions d’accès</b> (badge, portail,
-                    étage, etc.).
+                    • Vérifiez les <b>instructions d’accès</b> (badge, portail, étage, etc.).
                   </li>
                 </ul>
               </div>
