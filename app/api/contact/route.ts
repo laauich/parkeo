@@ -21,8 +21,6 @@ function clamp(s: string, max: number) {
 }
 
 // Rate limit très simple (process memory)
-// Suffisant pour Vercel la plupart du temps, sans DB.
-// (Si tu veux “ultra hard”, on le mettra en Supabase table.)
 const hits = new Map<string, { count: number; resetAt: number }>();
 function rateLimit(key: string, limit = 8, windowMs = 10 * 60 * 1000) {
   const now = Date.now();
@@ -75,7 +73,8 @@ export async function POST(req: Request) {
 
     // Honeypot
     if (body.website && String(body.website).trim().length > 0) {
-      return NextResponse.json({ ok: true }, { status: 200 }); // on "réussit" silencieusement
+      // on "réussit" silencieusement
+      return NextResponse.json({ ok: true }, { status: 200 });
     }
 
     const startedAt = Number(body.startedAt ?? 0);
@@ -83,7 +82,10 @@ export async function POST(req: Request) {
       const dt = Date.now() - startedAt;
       // Si soumis trop vite (< 800ms), souvent bot
       if (dt > 0 && dt < 800) {
-        return NextResponse.json({ ok: false, error: "Validation anti-spam. Réessaie." }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: "Validation anti-spam. Réessaie." },
+          { status: 400 }
+        );
       }
     }
 
@@ -132,7 +134,10 @@ export async function POST(req: Request) {
       to: SUPPORT_EMAIL,
       subject: supportSubject,
       html: supportHtml,
+      // ✅ compat SDK (selon version)
       replyTo: email,
+      // @ts-expect-error compat older/newer SDK naming
+      reply_to: email,
     });
 
     // Email de confirmation au client (premium)
@@ -156,11 +161,15 @@ export async function POST(req: Request) {
       to: email,
       subject: "Parkeo — Message reçu ✅",
       html: confirmHtml,
+      // ✅ compat SDK (selon version)
       replyTo: SUPPORT_EMAIL,
+      // @ts-expect-error compat older/newer SDK naming
+      reply_to: SUPPORT_EMAIL,
     });
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e: unknown) {
+    console.error("CONTACT_ERROR:", e);
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "Server error" },
       { status: 500 }
