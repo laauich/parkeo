@@ -81,7 +81,14 @@ function isWithinOneSlot(
     }))
     .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start);
 
-  return daySlots.some((s) => s.start <= startMin && s.end >= endMin);
+  // ✅ FIX MULTI-JOURS (seulement ça) :
+  // Si le segment finit à 24:00 (1440) et que le slot finit à 23:59 (1439),
+  // on considère que ça couvre la journée entière (usage classique pour "24/24").
+  return daySlots.some((s) => {
+    const coversEnd =
+      s.end >= endMin || (endMin === 24 * 60 && s.end === 24 * 60 - 1);
+    return s.start <= startMin && coversEnd;
+  });
 }
 
 /**
