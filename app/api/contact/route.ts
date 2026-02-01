@@ -35,6 +35,16 @@ function rateLimit(key: string, limit = 8, windowMs = 10 * 60 * 1000) {
   return { ok: true, remaining: limit - cur.count };
 }
 
+function pickFromEmail(resendFrom: string, supportEmail: string) {
+  // ✅ ne casse rien : si RESEND_FROM_EMAIL est clean, on le garde
+  // ✅ si quelqu’un remet "noreply", on force un FROM sans "no-reply" pour éviter le warning Resend
+  const lower = resendFrom.toLowerCase();
+  if (lower.includes("no-reply") || lower.includes("noreply")) {
+    return `Parkeo <${supportEmail}>`;
+  }
+  return resendFrom;
+}
+
 export async function POST(req: Request) {
   try {
     const resendKey = env("RESEND_API_KEY");
@@ -43,8 +53,8 @@ export async function POST(req: Request) {
     const SUPPORT_EMAIL = (process.env.SUPPORT_EMAIL || "support@parkeo.ch").trim();
 
     // Important: With Resend, "from" doit être sur un domaine vérifié.
-    // Exemple: "Parkeo <noreply@parkeo.ch>"
-    const FROM_EMAIL = env("RESEND_FROM_EMAIL"); // ex: "Parkeo <noreply@parkeo.ch>"
+    const RESEND_FROM_EMAIL = env("RESEND_FROM_EMAIL");
+    const FROM_EMAIL = pickFromEmail(RESEND_FROM_EMAIL, SUPPORT_EMAIL);
 
     const ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -73,14 +83,12 @@ export async function POST(req: Request) {
 
     // Honeypot
     if (body.website && String(body.website).trim().length > 0) {
-      // on "réussit" silencieusement
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
     const startedAt = Number(body.startedAt ?? 0);
     if (Number.isFinite(startedAt)) {
       const dt = Date.now() - startedAt;
-      // Si soumis trop vite (< 800ms), souvent bot
       if (dt > 0 && dt < 800) {
         return NextResponse.json(
           { ok: false, error: "Validation anti-spam. Réessaie." },
@@ -134,7 +142,6 @@ export async function POST(req: Request) {
       to: SUPPORT_EMAIL,
       subject: supportSubject,
       html: supportHtml,
-      // ✅ compat SDK (selon version)
       replyTo: email,
       // @ts-expect-error compat older/newer SDK naming
       reply_to: email,
@@ -161,7 +168,6 @@ export async function POST(req: Request) {
       to: email,
       subject: "Parkeo — Message reçu ✅",
       html: confirmHtml,
-      // ✅ compat SDK (selon version)
       replyTo: SUPPORT_EMAIL,
       // @ts-expect-error compat older/newer SDK naming
       reply_to: SUPPORT_EMAIL,
